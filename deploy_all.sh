@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# deploy_all.sh
-# 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
-# 支持云厂商内网资源优先、GitHub 多代理、多 Docker 镜像加速
-
 WORKDIR="/opt/zero-deploy"
 CONTROL_PROXY_REPO="https://github.com/xkwl11/control-proxy.git"
 CONTROL_PROXY_BRANCH="fix/db-path"
 PLANET_REPO="https://github.com/xubiaolin/docker-zerotier-planet.git"
 
-# ========== GitHub 代理列表（按顺序尝试） ==========
+# ========== GitHub 代理列表（2026年9月实测可用） ==========
 GITHUB_PROXIES=(
   "https://ghproxy.net/"
-  "https://git.ghproxy.cn/"
-  "https://ghproxy.com/"
+  "https://gh-proxy.com/"
+  "https://ghproxy.homeboyc.cn/"
+  "https://gh.zwy.one/"
+  "https://gh.llkk.cc/"
+  "https://ghproxy.cxkpro.top/"
+  "https://gitclone.com/"
 )
-# ===================================================
+# ===========================================================
 
-# ========== Docker 镜像加速列表（多源） ==========
+# ========== Docker 镜像加速列表 ==========
 DOCKER_MIRRORS=(
   "https://docker.xuanyuan.me"
   "https://docker.m.daocloud.io"
@@ -26,7 +26,7 @@ DOCKER_MIRRORS=(
   "https://docker.1panel.live"
   "https://hub.rat.dev"
 )
-# =================================================
+# ========================================
 
 echo "一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）"
 echo "工作目录: $WORKDIR"
@@ -209,27 +209,26 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
   echo "使用 control-proxy 仓库中的 docker-compose.yml"
   cp control-proxy/docker-compose.yml ./docker-compose.yml
 
-  # ----- 获取公网 IP（健壮处理） -----
+  # ----- 获取公网 IP（修复元数据地址，增加多个备用 API） -----
   PUBLIC_IP=""
-  # 尝试云厂商元数据
-  case "$CLOUD_PROVIDER" in
-    aliyun)
-      PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/public-ipv4 2>/dev/null || echo "")
-      ;;
-    tencent)
-      PUBLIC_IP=$(curl -s --connect-timeout 2 http://metadata.tencentyun.com/latest/meta-data/public-ipv4 2>/dev/null || echo "")
-      ;;
-    huawei)
-      PUBLIC_IP=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
-      ;;
-  esac
-  # 校验是否为合法 IPv4
+  # 1. 尝试阿里云元数据（正确路径是 eipv4）
+  PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null | grep -oE '([0-9]+\.){3}[0-9]+' || echo "")
+  
+  # 2. 如果失败，尝试多个公共 API
   if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     PUBLIC_IP=$(curl -s --connect-timeout 2 ifconfig.me 2>/dev/null || echo "")
   fi
   if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     PUBLIC_IP=$(curl -s --connect-timeout 2 ip.sb 2>/dev/null || echo "")
   fi
+  if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    PUBLIC_IP=$(curl -s --connect-timeout 2 icanhazip.com 2>/dev/null || echo "")
+  fi
+  if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    PUBLIC_IP=$(curl -s --connect-timeout 2 ipinfo.io/ip 2>/dev/null || echo "")
+  fi
+  
+  # 3. 所有方法都失败则使用 127.0.0.1
   if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     PUBLIC_IP="127.0.0.1"
     echo "警告: 无法获取公网 IP，使用 127.0.0.1"
