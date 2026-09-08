@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Admin - Control Proxy</title></head>
+<body>
+<h2>Pending Applications</h2>
+<div id="list"></div>
+<script>
+async function load(){
+  const r = await fetch('/admin/applications');
+  const rows = await r.json();
+  const div = document.getElementById('list');
+  div.innerHTML = rows.map(r=>`<div>
+    <b>${r.name}</b> - ${r.purpose} - ${r.email || r.phone}
+    <button onclick="approve('${r.id}')">Approve</button>
+    <button onclick="reject('${r.id}')">Reject</button>
+  </div>`).join('');
+}
+async function approve(id){
+  const nwid = prompt('Enter target network id (nwid) to invite users into:');
+  if (!nwid) return;
+  await fetch('/admin/approve/'+id, {method:'POST'});
+  const res = await fetch('/api/create-invite',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nwid, created_by:'admin', ttl:600})});
+  const j = await res.json();
+  alert('Invite token: '+j.token + '\nexpires: '+j.expires);
+  load();
+}
+async function reject(id){
+  await fetch('/admin/reject/'+id,{method:'POST'});
+  load();
+}
+load();
+</script>
+</body>
+</html>
