@@ -4,85 +4,53 @@ Minimal control-proxy for ZeroTier Planet.
 
 ## 一键部署（Ubuntu 26.04）
 
-下面的说明会在 Ubuntu 26.04 上自动安装所需环境，拉取并部署 docker-zerotier-planet 与 control-proxy，并把 planet 的 authtoken 自动复制给 control-proxy。请在开始前仔细检查脚本并确认没有敏感信息。
+下面的说明会在 Ubuntu 26.04 上自动安装所需环境，拉取并部署 docker-zerotier-planet 与 control-proxy，并把 planet 的 authtoken 自动复制给 control-proxy。为简洁起见，下面使用当前用户的主目录（$HOME）作为工作目录，避免必须创建系统级目录或频繁使用 sudo。
 
 安全注意事项
-- 脚本会在 /opt/zero-deploy 下工作；请确保服务器有足够磁盘空间并有 sudo 权限。
-- 首次创建管理员（admin）时，请不要把 control-proxy 的 8443 端口暴露到公网。推荐在容器内部创建 admin，或先将服务绑定到 127.0.0.1。
+- 脚本可能需要在运行期间使用 sudo 来安装软件或写入受保护目录；脚本会在必要时提示。请先阅读脚本内容确认没有敏感信息。
 - AUTHTOKEN 是控制器的敏感密钥，请妥善保管，不要将其提交到公共仓库。
+- 首次创建管理员（admin）时，请不要把 control-proxy 的 8443 端口暴露到公网。推荐在容器内部创建 admin，或先将服务绑定到 127.0.0.1。
 
-步骤概览
-1. 下载并查看一键部署脚本。
-2. 以 root 或使用 sudo 运行脚本；脚本会安装 Docker、docker compose 插件、克隆代码并启动服务。
-3. 在容器内部创建管理员并测试接口。
+极简步骤（推荐）
 
-详细步骤
+1) 在服务器上创建工作目录并下载脚本
 
-1) 在服务器上下载并查看脚本（推荐先查看再执行）
+mkdir -p "$HOME/zero-deploy"
 
-# 可选择两种脚本：
-# - deploy_all.sh：自动化部署并尝试复制 token（适合快速一键部署）
-# - deploy_packaged.sh：交互式/可回滚版本，带 --yes / --rollback 选项（推荐熟悉后使用）
+# 如果仓库为 public：
+curl -fsSL -o "$HOME/zero-deploy/deploy_all.sh" "https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh"
+chmod +x "$HOME/zero-deploy/deploy_all.sh"
 
-sudo mkdir -p /opt/zero-deploy
+# 如果仓库为 private：
+# 方法 A（使用 PAT，替换 TOKEN，务必保密）：
+# curl -fsSL -H "Authorization: token TOKEN" -H "Accept: application/vnd.github.v3.raw" \
+#   -o "$HOME/zero-deploy/deploy_all.sh" \
+#   "https://api.github.com/repos/xkwl11/control-proxy/contents/deploy_all.sh?ref=main"
+# chmod +x "$HOME/zero-deploy/deploy_all.sh"
 
-# 注意：如果仓库为私有，raw.githubusercontent.com 的原始文件链接会返回 404。请参考下面的私有仓库下载方法。
+# 方法 B（使用 gh CLI，需 gh auth login）：
+# gh api repos/xkwl11/control-proxy/contents/deploy_all.sh --raw > "$HOME/zero-deploy/deploy_all.sh"
+# chmod +x "$HOME/zero-deploy/deploy_all.sh"
 
-# --- 公共仓库（仓库为 public）示例：
-# 作为 root（不需要 sudo）：
-curl -fsSL -o /opt/zero-deploy/deploy_all.sh "https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh"
-chmod +x /opt/zero-deploy/deploy_all.sh
+2) 查看脚本（务必先检查，防止下载到 HTML/404 页面）
 
-# 普通用户，使用 sudo：
-sudo curl -fsSL -o /opt/zero-deploy/deploy_all.sh "https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh"
-sudo chmod +x /opt/zero-deploy/deploy_all.sh
+less "$HOME/zero-deploy/deploy_all.sh"
+# 或只看前几行：
+head -n 50 "$HOME/zero-deploy/deploy_all.sh"
 
-# 或者把整个步骤作为 root 执行（单行）：
-sudo sh -c 'curl -fsSL -o /opt/zero-deploy/deploy_all.sh "https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh" && chmod +x /opt/zero-deploy/deploy_all.sh'
+3) 运行脚本
 
-# 查看脚本内容（务必先检查）：
-sudo less /opt/zero-deploy/deploy_all.sh
+# 快速一键（如果脚本内部会使用 sudo，则会提示你）：
+"$HOME/zero-deploy/deploy_all.sh" --yes
 
-# --- 私有仓库（仓库为 private）示例：
-# 方法 A：使用 GitHub API + PAT（将 TOKEN 替换为个人访问令牌，需 repo 权限，务必保密）
-curl -fsSL -H "Authorization: token TOKEN" -H "Accept: application/vnd.github.v3.raw" \
-  -o /opt/zero-deploy/deploy_all.sh \
-  "https://api.github.com/repos/xkwl11/control-proxy/contents/deploy_all.sh?ref=main"
+# 或交互式（推荐首次运行）：
+"$HOME/zero-deploy/deploy_all.sh"
 
-sudo chmod +x /opt/zero-deploy/deploy_all.sh
+脚本会自动处理依赖安装、克隆并启动容器等操作。使用 $HOME/zero-deploy 的好处是：不需要提前创建 /opt 之类的系统目录，普通用户即可完成下载与执行权限设置；如果脚本需要提升权限，它会在运行时请求。
 
-# 方法 B：使用 gh CLI（需先 gh auth login 并有权限）
-# 该命令会把文件内容写入到目标路径：
-gh api repos/xkwl11/control-proxy/contents/deploy_all.sh --raw > /opt/zero-deploy/deploy_all.sh
-sudo chmod +x /opt/zero-deploy/deploy_all.sh
+查看服务状态与日志（示例）
 
-# 下载交互/打包脚本（raw，可选）
-# 公共仓库：
-# curl -fsSL -o /opt/zero-deploy/deploy_packaged.sh "https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_packaged.sh"
-# sudo chmod +x /opt/zero-deploy/deploy_packaged.sh
-# 私有仓库：同上使用 API 或 gh 方法替换 URL
-
-# 查看脚本内容（务必先检查）：
-sudo less /opt/zero-deploy/deploy_all.sh
-
-2) 运行脚本（以 root 或 sudo 运行）
-
-# 非交互一键运行（快速）
-sudo /opt/zero-deploy/deploy_all.sh --yes
-
-# 或使用交互/可回滚脚本（推荐首次运行）：
-sudo /opt/zero-deploy/deploy_packaged.sh
-
-脚本会：
-- 安装必要系统包（git、curl、openssl、jq 等），安装 Docker 与 docker compose 插件；
-- 在 /opt/zero-deploy 下 clone/更新 docker-zerotier-planet 和 control-proxy（control-proxy 会切到 fix/db-path 分支）；
-- 生成 .env（如果不存在）并创建随机 SERVER_SECRET；
-- 使用 docker compose 构建并启动 planet、init-token 与 control-proxy；
-- init-token 会尝试从 planet 的卷中拷贝 authtoken.secret 到 control-proxy 的可读路径。
-
-3) 查看服务状态与日志
-
-cd /opt/zero-deploy
+cd "$HOME/zero-deploy"
 
 docker compose ps
 
@@ -92,32 +60,17 @@ docker logs -f init-token
 
 docker logs -f control-proxy
 
-4) 验证 token 是否已复制（容器内查看）
+验证 token 是否已复制（容器内查看）
 
 docker exec -it control-proxy sh -c 'if [ -f /secrets/authtoken.secret ]; then echo "authtoken:"; cat /secrets/authtoken.secret; else echo "no authtoken"; fi'
 
-5) 安全创建管理员（推荐在容器内部创建）
+安全创建管理员（推荐在容器内部创建）
 
-# 在 control-proxy 容器内部创建 admin（避免公网抢注）
 docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"你的强密码"}'\'' http://localhost:8443/api/register'
 
-# 登录获取 token（同样容器内）
-docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"你的强密码"}'\'' http://localhost:8443/api/login'
-
-# 使用获取到的 JWT 测试受保护接口（例如列出 invites）
-# 在宿主机上使用：
-# curl -H "Authorization: Bearer <token>" http://<server-ip>:8443/api/zui/invites
-
-常见问题与排查
-- better-sqlite3 编译失败：查看 docker compose build 输出。脚本已在 builder 阶段安装构建依赖，但某些平台（如 Apple Silicon）可能需要 --platform=linux/amd64 构建或额外依赖。
-- init-token 未找到 authtoken：不同的 planet 实现可能把 token 写在不同位置，请检查 zerotier-planet 的容器日志或容器内 /var/lib/zerotier-one 路径。我可以根据具体情况提供排查步骤。
-- control-proxy 调用 controller 报错（controller call failed）：检查 CONTROLLER_URL（默认 compose 指向 http://planet:3443），确认 planet API 端口是否匹配；确认 authtoken 路径与容器内挂载是否正确。
-- 数据库写入或权限问题：查看卷权限或容器内 /data 的权限，必要时调整宿主机目录权限或运行容器时指定 --user。
+常见问题与排查（保留简短说明）
+- 如果下载的文件是 HTML（404 页面），请检查仓库是否为 private，或使用上面的 PAT/gh 方法。
+- 若脚本在安装依赖时失败，请查看脚本输出日志，根据提示安装缺失的包。
 
 其它说明
-- docker-compose.yml、deploy_all.sh、deploy_packaged.sh 都已放在 main 分支，可直接通过 raw 链接下载（如果仓库为 public）：
-  - https://raw.githubusercontent.com/xkwl11/control-proxy/main/docker-compose.yml
-  - https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh
-  - https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_packaged.sh
-
-- 如果你愿意，我可以把 control-proxy 的 fix/db-path 分支的改动合并入 main（已完成），或继续增强 init-token 的查找逻辑以支持更多 planet 实现。
+- 如果你愿意，我可以把 README 中其他部分再进一步简化或把示例脚本提取到单独的 docs/deploy.md 文件。
