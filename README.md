@@ -70,6 +70,4 @@ docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: applicati
 - control-proxy 调用 controller 报错（controller call failed）：检查 CONTROLLER_URL（默认 compose 指向 http://planet:3443），确认 planet API 端口是否匹配；确认 authtoken 是否有效并已复制。
 - 数据库写入或权限问题：查看卷权限或容器内 /data 的权限，必要时调整宿主机目录权限或运行容器时指定 --user。
 
-其它说明
-- 如果你愿意，我可以把 fix/db-path 分支的改动合并到 main 并创建 PR。当前我已直接把 README 的部署说明写入主分支（如需进一步修改或增加更多安全策略，我可以继续更新）。
 
