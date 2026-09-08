@@ -33,9 +33,7 @@ services:
     restart: "no"
 
   control-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: ./control-proxy   # 改为本地构建路径
     image: control-proxy:fix-db-path
     container_name: control-proxy
     depends_on:
