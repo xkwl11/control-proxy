@@ -18,7 +18,6 @@ PLANET_REPO="https://github.com/xubiaolin/docker-zerotier-planet.git"
 
 # ========== GitHub 代理列表（按顺序尝试） ==========
 GITHUB_PROXIES=(
-  "https://ghproxy.net/"
   "https://gh-proxy.com/"
   "https://ghproxy.homeboyc.cn/"
   "https://gh.zwy.one/"
