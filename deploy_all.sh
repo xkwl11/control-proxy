@@ -8,6 +8,7 @@ set -euo pipefail
 # - 公网 IP 获取（阿里云元数据 eipv4 + 多个备用 API）
 # - Docker 镜像加速（多源）
 # - planet 服务使用本地构建（避免 Docker Hub 拉取失败）
+# - control-proxy 构建路径修正（指向 ./control-proxy）
 # - 云厂商内网资源优先（阿里/腾讯/华为）
 # =============================================================================
 
@@ -254,11 +255,15 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
     }
   }' ./docker-compose.yml
 
-  # ----- 【关键修复】将 planet 的 image 改为本地构建，避免拉取失败 -----
+  # ----- 将 planet 的 image 改为本地构建 -----
   sed -i '/^  planet:/,/^  [^ ]/ s|image: xubiaolin/zerotier-planet:latest|build: ./docker-zerotier-planet|' ./docker-compose.yml
+
+  # ----- 【关键修复】将 control-proxy 的 build 路径改为 ./control-proxy -----
+  sed -i '/^  control-proxy:/,/^  [^ ]/ s|build: .|build: ./control-proxy|' ./docker-compose.yml
 
   echo "已为 planet 服务注入环境变量 IP_ADDR4=$PUBLIC_IP, ZT_PORT=9994, API_PORT=3443"
   echo "已将 planet 服务改为本地构建（使用 ./docker-zerotier-planet 目录）"
+  echo "已将 control-proxy 构建路径改为 ./control-proxy"
 else
   echo "control-proxy 仓库中缺少 docker-compose.yml，使用现有仓库根目录的 compose 文件"
 fi
