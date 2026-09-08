@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const controller = require('../utils/controller');
 const { v4: uuidv4 } = require('uuid');
-const { nowSec } = require('../utils');
+const { nowSec, genToken } = require('../utils');
 const { authMiddleware, adminOnly } = require('./auth');
 
 // List networks (controller)
@@ -85,7 +85,7 @@ router.post('/invites', authMiddleware, async (req,res) => {
   const { nwid, ttl=600, uses_left=1 } = req.body;
   if (!nwid) return res.status(400).json({ error: 'nwid required' });
   const payload = `${nwid}|${req.user.username}|${nowSec()}|${uuidv4()}`;
-  const token = require('../utils').genToken ? require('../utils').genToken(payload) : require('../utils').genToken(payload);
+  const token = genToken(payload);
   const expires = nowSec() + parseInt(ttl,10);
   db.prepare('INSERT INTO invites (token,nwid,expires_at,uses_left,created_by,created_at) VALUES (?,?,?,?,?,?)')
     .run(token, nwid, expires, uses_left, req.user.username, nowSec());
