@@ -95,6 +95,25 @@ fi
 if [ -f "control-proxy/docker-compose.yml" ]; then
   echo "使用 control-proxy 仓库中的 docker-compose.yml"
   cp control-proxy/docker-compose.yml ./docker-compose.yml
+
+  # ========== 修复 planet 服务的 environment 为空的问题 ==========
+  # 获取本机公网 IP（阿里云内网元数据优先，否则用 ifconfig.me）
+  PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/public-ipv4 || curl -s --connect-timeout 2 ifconfig.me || echo "127.0.0.1")
+  echo "检测到公网 IP: $PUBLIC_IP"
+
+  # 使用 sed 在 planet 的 environment: 行后插入三行键值对（缩进 6 个空格）
+  sed -i '/^  planet:/,/^  [^ ]/ {
+    /^    environment:/ {
+      s/^    environment:.*/    environment:/
+      a\      IP_ADDR4: '"$PUBLIC_IP"'
+      a\      ZT_PORT: 9994
+      a\      API_PORT: 3443
+    }
+  }' ./docker-compose.yml
+
+  echo "已为 planet 服务注入环境变量 IP_ADDR4=$PUBLIC_IP, ZT_PORT=9994, API_PORT=3443"
+  # ========== 修复结束 ==========
+
 else
   echo "control-proxy 仓库中缺少 docker-compose.yml，使用现有仓库根目录的 compose 文件"
 fi
