@@ -40,29 +40,22 @@ fi
 
 # ========== 函数：检测云厂商 ==========
 detect_cloud_provider() {
-  # 阿里云
   if curl -s --connect-timeout 1 -I http://100.100.100.200 >/dev/null 2>&1; then
     echo "aliyun"
     return
   fi
-  # 腾讯云
   if curl -s --connect-timeout 1 -I http://metadata.tencentyun.com >/dev/null 2>&1; then
     echo "tencent"
     return
   fi
-  # 华为云
   if curl -s --connect-timeout 1 -I http://169.254.169.254 >/dev/null 2>&1; then
-    # 华为云元数据可能不同，简单通过IP段判断，但为了准确，我们直接尝试访问华为云内网镜像
     if curl -s --connect-timeout 1 -I http://mirrors.huaweicloud.com >/dev/null 2>&1; then
       echo "huawei"
       return
     fi
   fi
-  # 其他
   echo "unknown"
 }
-# ============================================
-
 CLOUD_PROVIDER=$(detect_cloud_provider)
 echo "检测到云厂商: $CLOUD_PROVIDER"
 
@@ -70,64 +63,47 @@ echo "检测到云厂商: $CLOUD_PROVIDER"
 case "$CLOUD_PROVIDER" in
   aliyun)
     echo "配置阿里云内网 apt 源"
-    sed -i 's/^deb http:\/\/.*\/ubuntu\//deb http:\/\/mirrors.aliyuncs.com\/ubuntu\//g' /etc/apt/sources.list
+    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.aliyuncs.com/ubuntu/|g' /etc/apt/sources.list
     ;;
   tencent)
     echo "配置腾讯云内网 apt 源"
-    sed -i 's/^deb http:\/\/.*\/ubuntu\//deb http:\/\/mirrors.tencentyun.com\/ubuntu\//g' /etc/apt/sources.list
+    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list
     ;;
   huawei)
     echo "配置华为云内网 apt 源"
-    sed -i 's/^deb http:\/\/.*\/ubuntu\//deb http:\/\/mirrors.huaweicloud.com\/ubuntu\//g' /etc/apt/sources.list
+    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.huaweicloud.com/ubuntu/|g' /etc/apt/sources.list
     ;;
-  *)
-    echo "未识别的云厂商，使用默认源（或清华源？保留原配置）"
-    # 也可以默认使用清华源，但为了不干扰，这里不做更改
-    ;;
+  *) echo "未识别的云厂商，使用默认源" ;;
 esac
 
 # ========== 系统准备 ==========
 apt-get update -y
 apt-get install -y --no-install-recommends \
-  ca-certificates \
-  curl \
-  gnupg \
-  lsb-release \
-  git \
-  jq
+  ca-certificates curl gnupg lsb-release git jq
 
 # ========== 安装 Docker（优先使用云厂商内网源） ==========
 if ! command -v docker >/dev/null 2>&1; then
   echo "安装 Docker..."
-
-  # 根据云厂商设置 Docker 源
   case "$CLOUD_PROVIDER" in
     aliyun)
-      echo "使用阿里云内网 Docker 源"
       curl -fsSL http://mirrors.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
       echo "deb [arch=amd64] http://mirrors.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker-ce.list
       ;;
     tencent)
-      echo "使用腾讯云内网 Docker 源"
       curl -fsSL http://mirrors.tencentyun.com/docker-ce/linux/ubuntu/gpg | apt-key add -
       echo "deb [arch=amd64] http://mirrors.tencentyun.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker-ce.list
       ;;
     huawei)
-      echo "使用华为云内网 Docker 源"
       curl -fsSL http://mirrors.huaweicloud.com/docker-ce/linux/ubuntu/gpg | apt-key add -
       echo "deb [arch=amd64] http://mirrors.huaweicloud.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker-ce.list
       ;;
     *)
-      echo "使用清华大学 Docker 源（未识别云厂商）"
       curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/ubuntu/gpg | apt-key add -
       RELEASE=$(lsb_release -cs)
-      if [ "$RELEASE" != "jammy" ] && [ "$RELEASE" != "focal" ] && [ "$RELEASE" != "bionic" ]; then
-        RELEASE="jammy"
-      fi
+      [[ "$RELEASE" != "jammy" && "$RELEASE" != "focal" && "$RELEASE" != "bionic" ]] && RELEASE="jammy"
       echo "deb [arch=amd64] https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/ubuntu $RELEASE stable" > /etc/apt/sources.list.d/docker-ce.list
       ;;
   esac
-
   apt-get update -y
   apt-get install -y docker-ce docker-ce-cli containerd.io
 else
@@ -147,7 +123,6 @@ fi
 if [ ${#DOCKER_MIRRORS[@]} -gt 0 ]; then
   mkdir -p /etc/docker
   MIRROR_LIST=$(printf '"%s",' "${DOCKER_MIRRORS[@]}" | sed 's/,$//')
-  
   if [ ! -f /etc/docker/daemon.json ]; then
     echo "配置 Docker 镜像加速器（多源）..."
     cat > /etc/docker/daemon.json <<EOF
@@ -155,8 +130,7 @@ if [ ${#DOCKER_MIRRORS[@]} -gt 0 ]; then
   "registry-mirrors": [${MIRROR_LIST}]
 }
 EOF
-    systemctl daemon-reload
-    systemctl restart docker
+    systemctl daemon-reload && systemctl restart docker
     echo "Docker 镜像加速配置完成"
   else
     if ! grep -q '"registry-mirrors"' /etc/docker/daemon.json; then
@@ -165,8 +139,7 @@ EOF
         tmp=$(mktemp)
         MIRROR_JSON=$(printf '%s' "${DOCKER_MIRRORS[@]}" | jq -R -s -c 'split("\n") | map(select(length>0))')
         jq --argjson mirrors "$MIRROR_JSON" '. + {"registry-mirrors": $mirrors}' /etc/docker/daemon.json > "$tmp" && mv "$tmp" /etc/docker/daemon.json
-        systemctl daemon-reload
-        systemctl restart docker
+        systemctl daemon-reload && systemctl restart docker
         echo "Docker 镜像加速配置已合并"
       else
         echo "警告: 未安装 jq，无法自动合并 daemon.json，请手动添加 registry-mirrors"
@@ -185,38 +158,26 @@ fi
 
 # ========== 辅助函数：带代理的 git clone ==========
 clone_with_proxy() {
-  local repo_url="$1"
-  local target_dir="$2"
-  local branch="${3:-}"
-  
+  local repo_url="$1" target_dir="$2" branch="${3:-}"
   for proxy in "${GITHUB_PROXIES[@]}"; do
     local proxy_url="${proxy}${repo_url}"
     echo "尝试使用代理: $proxy"
     if [ -z "$branch" ]; then
-      if git clone "$proxy_url" "$target_dir" 2>/dev/null; then
-        echo "克隆成功 (代理: $proxy)"
-        return 0
-      fi
+      git clone "$proxy_url" "$target_dir" 2>/dev/null && { echo "克隆成功 (代理: $proxy)"; return 0; }
     else
-      if git clone -b "$branch" "$proxy_url" "$target_dir" 2>/dev/null; then
-        echo "克隆成功 (代理: $proxy)"
-        return 0
-      fi
+      git clone -b "$branch" "$proxy_url" "$target_dir" 2>/dev/null && { echo "克隆成功 (代理: $proxy)"; return 0; }
     fi
   done
   echo "所有代理尝试失败，请检查网络或手动克隆" >&2
   return 1
 }
-# ===================================================
 
 # ========== 克隆/更新项目 ==========
-mkdir -p "$WORKDIR"
-cd "$WORKDIR"
+mkdir -p "$WORKDIR" && cd "$WORKDIR"
 
 if [ -d "docker-zerotier-planet" ]; then
   echo "docker-zerotier-planet 已存在，尝试更新"
-  cd docker-zerotier-planet && git pull --ff-only || true
-  cd ..
+  cd docker-zerotier-planet && git pull --ff-only || true && cd ..
 else
   echo "克隆 docker-zerotier-planet (使用代理)..."
   clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
@@ -224,8 +185,7 @@ fi
 
 if [ -d "control-proxy" ]; then
   echo "control-proxy 已存在，尝试更新并切换分支"
-  cd control-proxy && git fetch origin && git checkout "$CONTROL_PROXY_BRANCH" && git pull --ff-only origin "$CONTROL_PROXY_BRANCH" || true
-  cd ..
+  cd control-proxy && git fetch origin && git checkout "$CONTROL_PROXY_BRANCH" && git pull --ff-only origin "$CONTROL_PROXY_BRANCH" || true && cd ..
 else
   echo "克隆 control-proxy (使用代理，分支 $CONTROL_PROXY_BRANCH)..."
   clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
@@ -249,25 +209,34 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
   echo "使用 control-proxy 仓库中的 docker-compose.yml"
   cp control-proxy/docker-compose.yml ./docker-compose.yml
 
-  # 获取公网 IP（优先云厂商元数据，其次 ifconfig.me）
+  # ----- 获取公网 IP（健壮处理） -----
   PUBLIC_IP=""
+  # 尝试云厂商元数据
   case "$CLOUD_PROVIDER" in
     aliyun)
-      PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/public-ipv4 || echo "")
+      PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/public-ipv4 2>/dev/null || echo "")
       ;;
     tencent)
-      PUBLIC_IP=$(curl -s --connect-timeout 2 http://metadata.tencentyun.com/latest/meta-data/public-ipv4 || echo "")
+      PUBLIC_IP=$(curl -s --connect-timeout 2 http://metadata.tencentyun.com/latest/meta-data/public-ipv4 2>/dev/null || echo "")
       ;;
     huawei)
-      PUBLIC_IP=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-ipv4 || echo "")
+      PUBLIC_IP=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
       ;;
   esac
-  if [ -z "$PUBLIC_IP" ]; then
-    PUBLIC_IP=$(curl -s --connect-timeout 2 ifconfig.me || echo "127.0.0.1")
+  # 校验是否为合法 IPv4
+  if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    PUBLIC_IP=$(curl -s --connect-timeout 2 ifconfig.me 2>/dev/null || echo "")
+  fi
+  if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    PUBLIC_IP=$(curl -s --connect-timeout 2 ip.sb 2>/dev/null || echo "")
+  fi
+  if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    PUBLIC_IP="127.0.0.1"
+    echo "警告: 无法获取公网 IP，使用 127.0.0.1"
   fi
   echo "检测到公网 IP: $PUBLIC_IP"
 
-  # 修复 planet 服务的 environment
+  # ----- 修复 planet 服务的 environment -----
   sed -i '/^  planet:/,/^  [^ ]/ {
     /^    environment:/ {
       s/^    environment:.*/    environment:/
