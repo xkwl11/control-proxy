@@ -2,25 +2,91 @@
 set -euo pipefail
 
 # deploy_all.sh
-# 一键部署脚本（Ubuntu 26.04）
-# 作用：在服务器上安装 Docker、Docker Compose，克隆 docker-zerotier-planet 与 control-proxy（fix/db-path 分支），
-# 启动 docker compose 并等待 token 拷贝与基本就绪。
+# 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
+# 支持云厂商内网资源优先、GitHub 多代理、多 Docker 镜像加速
 
 WORKDIR="/opt/zero-deploy"
 CONTROL_PROXY_REPO="https://github.com/xkwl11/control-proxy.git"
 CONTROL_PROXY_BRANCH="fix/db-path"
 PLANET_REPO="https://github.com/xubiaolin/docker-zerotier-planet.git"
-COMPOSE_FILE_PATH="$WORKDIR/docker-compose.yml"
+
+# ========== GitHub 代理列表（按顺序尝试） ==========
+GITHUB_PROXIES=(
+  "https://ghproxy.net/"
+  "https://git.ghproxy.cn/"
+  "https://ghproxy.com/"
+)
+# ===================================================
+
+# ========== Docker 镜像加速列表（多源） ==========
+DOCKER_MIRRORS=(
+  "https://docker.xuanyuan.me"
+  "https://docker.m.daocloud.io"
+  "https://docker.1ms.run"
+  "https://docker.1panel.live"
+  "https://hub.rat.dev"
+)
+# =================================================
 
 echo "一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）"
 echo "工作目录: $WORKDIR"
+echo "GitHub 代理: ${GITHUB_PROXIES[*]}"
+echo "Docker 镜像加速: ${DOCKER_MIRRORS[*]}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "请以 root 或使用 sudo 运行此脚本" >&2
   exit 1
 fi
 
-# 1. 系统准备
+# ========== 函数：检测云厂商 ==========
+detect_cloud_provider() {
+  # 阿里云
+  if curl -s --connect-timeout 1 -I http://100.100.100.200 >/dev/null 2>&1; then
+    echo "aliyun"
+    return
+  fi
+  # 腾讯云
+  if curl -s --connect-timeout 1 -I http://metadata.tencentyun.com >/dev/null 2>&1; then
+    echo "tencent"
+    return
+  fi
+  # 华为云
+  if curl -s --connect-timeout 1 -I http://169.254.169.254 >/dev/null 2>&1; then
+    # 华为云元数据可能不同，简单通过IP段判断，但为了准确，我们直接尝试访问华为云内网镜像
+    if curl -s --connect-timeout 1 -I http://mirrors.huaweicloud.com >/dev/null 2>&1; then
+      echo "huawei"
+      return
+    fi
+  fi
+  # 其他
+  echo "unknown"
+}
+# ============================================
+
+CLOUD_PROVIDER=$(detect_cloud_provider)
+echo "检测到云厂商: $CLOUD_PROVIDER"
+
+# ========== 根据云厂商配置 apt 源 ==========
+case "$CLOUD_PROVIDER" in
+  aliyun)
+    echo "配置阿里云内网 apt 源"
+    sed -i 's/^deb http:\/\/.*\/ubuntu\//deb http:\/\/mirrors.aliyuncs.com\/ubuntu\//g' /etc/apt/sources.list
+    ;;
+  tencent)
+    echo "配置腾讯云内网 apt 源"
+    sed -i 's/^deb http:\/\/.*\/ubuntu\//deb http:\/\/mirrors.tencentyun.com\/ubuntu\//g' /etc/apt/sources.list
+    ;;
+  huawei)
+    echo "配置华为云内网 apt 源"
+    sed -i 's/^deb http:\/\/.*\/ubuntu\//deb http:\/\/mirrors.huaweicloud.com\/ubuntu\//g' /etc/apt/sources.list
+    ;;
+  *)
+    echo "未识别的云厂商，使用默认源（或清华源？保留原配置）"
+    # 也可以默认使用清华源，但为了不干扰，这里不做更改
+    ;;
+esac
+
+# ========== 系统准备 ==========
 apt-get update -y
 apt-get install -y --no-install-recommends \
   ca-certificates \
@@ -30,15 +96,45 @@ apt-get install -y --no-install-recommends \
   git \
   jq
 
-# 2. 安装 Docker（使用官方 convenience script）
+# ========== 安装 Docker（优先使用云厂商内网源） ==========
 if ! command -v docker >/dev/null 2>&1; then
   echo "安装 Docker..."
-  curl -fsSL https://get.docker.com | sh
+
+  # 根据云厂商设置 Docker 源
+  case "$CLOUD_PROVIDER" in
+    aliyun)
+      echo "使用阿里云内网 Docker 源"
+      curl -fsSL http://mirrors.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
+      echo "deb [arch=amd64] http://mirrors.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker-ce.list
+      ;;
+    tencent)
+      echo "使用腾讯云内网 Docker 源"
+      curl -fsSL http://mirrors.tencentyun.com/docker-ce/linux/ubuntu/gpg | apt-key add -
+      echo "deb [arch=amd64] http://mirrors.tencentyun.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker-ce.list
+      ;;
+    huawei)
+      echo "使用华为云内网 Docker 源"
+      curl -fsSL http://mirrors.huaweicloud.com/docker-ce/linux/ubuntu/gpg | apt-key add -
+      echo "deb [arch=amd64] http://mirrors.huaweicloud.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker-ce.list
+      ;;
+    *)
+      echo "使用清华大学 Docker 源（未识别云厂商）"
+      curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/ubuntu/gpg | apt-key add -
+      RELEASE=$(lsb_release -cs)
+      if [ "$RELEASE" != "jammy" ] && [ "$RELEASE" != "focal" ] && [ "$RELEASE" != "bionic" ]; then
+        RELEASE="jammy"
+      fi
+      echo "deb [arch=amd64] https://mirrors.tuna.tsinghua.edu.cn/docker-ce/linux/ubuntu $RELEASE stable" > /etc/apt/sources.list.d/docker-ce.list
+      ;;
+  esac
+
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io
 else
   echo "检测到已安装 Docker"
 fi
 
-# 3. 安装 docker compose plugin（现代 Docker 使用 Docker Compose v2 插件）
+# ========== 安装 docker compose plugin ==========
 if ! docker compose version >/dev/null 2>&1; then
   echo "安装 docker compose plugin..."
   apt-get update -y
@@ -47,13 +143,73 @@ else
   echo "检测到 docker compose 插件"
 fi
 
-# 4. 将当前用户加入 docker 组（若非 root 使用者希望免 sudo）
+# ========== 配置 Docker 镜像加速器（多源） ==========
+if [ ${#DOCKER_MIRRORS[@]} -gt 0 ]; then
+  mkdir -p /etc/docker
+  MIRROR_LIST=$(printf '"%s",' "${DOCKER_MIRRORS[@]}" | sed 's/,$//')
+  
+  if [ ! -f /etc/docker/daemon.json ]; then
+    echo "配置 Docker 镜像加速器（多源）..."
+    cat > /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": [${MIRROR_LIST}]
+}
+EOF
+    systemctl daemon-reload
+    systemctl restart docker
+    echo "Docker 镜像加速配置完成"
+  else
+    if ! grep -q '"registry-mirrors"' /etc/docker/daemon.json; then
+      echo "向现有 daemon.json 添加镜像加速器（多源）..."
+      if command -v jq >/dev/null 2>&1; then
+        tmp=$(mktemp)
+        MIRROR_JSON=$(printf '%s' "${DOCKER_MIRRORS[@]}" | jq -R -s -c 'split("\n") | map(select(length>0))')
+        jq --argjson mirrors "$MIRROR_JSON" '. + {"registry-mirrors": $mirrors}' /etc/docker/daemon.json > "$tmp" && mv "$tmp" /etc/docker/daemon.json
+        systemctl daemon-reload
+        systemctl restart docker
+        echo "Docker 镜像加速配置已合并"
+      else
+        echo "警告: 未安装 jq，无法自动合并 daemon.json，请手动添加 registry-mirrors"
+      fi
+    else
+      echo "daemon.json 已包含 registry-mirrors，跳过配置"
+    fi
+  fi
+fi
+
+# ========== 将当前用户加入 docker 组 ==========
 if [ -n "${SUDO_USER-}" ] && [ "$SUDO_USER" != "root" ]; then
   usermod -aG docker "$SUDO_USER" || true
   echo "已将 $SUDO_USER 添加到 docker 组（需重新登录生效）"
 fi
 
-# 5. 克隆/更新项目
+# ========== 辅助函数：带代理的 git clone ==========
+clone_with_proxy() {
+  local repo_url="$1"
+  local target_dir="$2"
+  local branch="${3:-}"
+  
+  for proxy in "${GITHUB_PROXIES[@]}"; do
+    local proxy_url="${proxy}${repo_url}"
+    echo "尝试使用代理: $proxy"
+    if [ -z "$branch" ]; then
+      if git clone "$proxy_url" "$target_dir" 2>/dev/null; then
+        echo "克隆成功 (代理: $proxy)"
+        return 0
+      fi
+    else
+      if git clone -b "$branch" "$proxy_url" "$target_dir" 2>/dev/null; then
+        echo "克隆成功 (代理: $proxy)"
+        return 0
+      fi
+    fi
+  done
+  echo "所有代理尝试失败，请检查网络或手动克隆" >&2
+  return 1
+}
+# ===================================================
+
+# ========== 克隆/更新项目 ==========
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
@@ -62,7 +218,8 @@ if [ -d "docker-zerotier-planet" ]; then
   cd docker-zerotier-planet && git pull --ff-only || true
   cd ..
 else
-  git clone "$PLANET_REPO"
+  echo "克隆 docker-zerotier-planet (使用代理)..."
+  clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
 fi
 
 if [ -d "control-proxy" ]; then
@@ -70,14 +227,11 @@ if [ -d "control-proxy" ]; then
   cd control-proxy && git fetch origin && git checkout "$CONTROL_PROXY_BRANCH" && git pull --ff-only origin "$CONTROL_PROXY_BRANCH" || true
   cd ..
 else
-  git clone "$CONTROL_PROXY_REPO"
-  cd control-proxy
-  git fetch origin
-  git checkout "$CONTROL_PROXY_BRANCH"
-  cd ..
+  echo "克隆 control-proxy (使用代理，分支 $CONTROL_PROXY_BRANCH)..."
+  clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
 fi
 
-# 6. 生成 .env（若不存在）
+# ========== 生成 .env ==========
 if [ ! -f ".env" ]; then
   echo "生成 .env（包含 SERVER_SECRET）"
   SERVER_SECRET=$(openssl rand -hex 32 || head -c 32 /dev/urandom | xxd -p -c 32)
@@ -90,18 +244,30 @@ else
   echo ".env 已存在，跳过生成"
 fi
 
-# 7. 确保 control-proxy 的 Dockerfile 与 docker-compose 在工作目录
-# 复制 control-proxy 的 docker-compose.yml（我们在 control-proxy 分支已提交）
+# ========== 复制并修复 docker-compose.yml ==========
 if [ -f "control-proxy/docker-compose.yml" ]; then
   echo "使用 control-proxy 仓库中的 docker-compose.yml"
   cp control-proxy/docker-compose.yml ./docker-compose.yml
 
-  # ========== 修复 planet 服务的 environment 为空的问题 ==========
-  # 获取本机公网 IP（阿里云内网元数据优先，否则用 ifconfig.me）
-  PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/public-ipv4 || curl -s --connect-timeout 2 ifconfig.me || echo "127.0.0.1")
+  # 获取公网 IP（优先云厂商元数据，其次 ifconfig.me）
+  PUBLIC_IP=""
+  case "$CLOUD_PROVIDER" in
+    aliyun)
+      PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/public-ipv4 || echo "")
+      ;;
+    tencent)
+      PUBLIC_IP=$(curl -s --connect-timeout 2 http://metadata.tencentyun.com/latest/meta-data/public-ipv4 || echo "")
+      ;;
+    huawei)
+      PUBLIC_IP=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-ipv4 || echo "")
+      ;;
+  esac
+  if [ -z "$PUBLIC_IP" ]; then
+    PUBLIC_IP=$(curl -s --connect-timeout 2 ifconfig.me || echo "127.0.0.1")
+  fi
   echo "检测到公网 IP: $PUBLIC_IP"
 
-  # 使用 sed 在 planet 的 environment: 行后插入三行键值对（缩进 6 个空格）
+  # 修复 planet 服务的 environment
   sed -i '/^  planet:/,/^  [^ ]/ {
     /^    environment:/ {
       s/^    environment:.*/    environment:/
@@ -112,17 +278,15 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
   }' ./docker-compose.yml
 
   echo "已为 planet 服务注入环境变量 IP_ADDR4=$PUBLIC_IP, ZT_PORT=9994, API_PORT=3443"
-  # ========== 修复结束 ==========
-
 else
   echo "control-proxy 仓库中缺少 docker-compose.yml，使用现有仓库根目录的 compose 文件"
 fi
 
-# 8. 构建并启动（docker compose）
+# ========== 构建并启动 ==========
 echo "开始构建并启动服务（可能需要一段时间）..."
 docker compose up -d --build
 
-# 9. 等待 planet 与 init-token 完成
+# ========== 等待服务就绪 ==========
 echo "等待 zerotier-planet 容器启动并生成 authtoken（最长等待 120 秒）..."
 for i in $(seq 1 40); do
   if docker ps --format '{{.Names}}' | grep -q '^zerotier-planet$'; then
@@ -134,7 +298,6 @@ for i in $(seq 1 40); do
   sleep 3
 done
 
-# 等待 init-token 运行结束
 echo "等待 init-token 复制 authtoken 到 control-proxy 卷（最多 60s）..."
 for i in $(seq 1 20); do
   if docker ps -a --format '{{.Names}}' | grep -q '^init-token$'; then
@@ -151,23 +314,22 @@ for i in $(seq 1 20); do
   sleep 3
 done
 
-# 10. 输出管理员创建建议
+# ========== 输出后续指引 ==========
 cat <<EOF
 部署完成（或已启动）。下一步建议：
-1) 在 control-proxy 容器内部创建管理员（推荐在容器内部以避免公网注册风险）：
-
+1) 在 control-proxy 容器内部创建管理员：
    docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"强密码"}'\'' http://localhost:8443/api/register'
 
 2) 登录并获取 JWT：
    docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"强密码"}'\'' http://localhost:8443/api/login'
 
-3) 如果 init-token 未成功复制 token，请查看 zerotier-planet 日志以确定 token 输出位置：
+3) 如果 init-token 未成功复制 token，请查看日志：
    docker logs zerotier-planet
    docker logs init-token
 
 常见问题排查：
-- better-sqlite3 构建失败：查看 docker compose build 输出，建议在构建机器上安装必需的构建工具，或在 dockerfile 的 builder 阶段中已包含。
-- token 未找到：不同的 planet 部署可能把 token 写在不同位置，检查 zerotier-planet README 或容器内 /var/lib/zerotier-one 路径。
+- better-sqlite3 构建失败：查看 docker compose build 输出。
+- token 未找到：检查 zerotier-planet 容器内 /var/lib/zerotier-one 路径。
 
 EOF
 
