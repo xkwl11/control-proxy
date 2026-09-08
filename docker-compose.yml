@@ -21,6 +21,17 @@ services:
       - ./planet-data:/app/dist
     restart: unless-stopped
 
+  init-token:
+    image: busybox:1.36
+    container_name: init-token
+    depends_on:
+      - planet
+    volumes:
+      - zerotier_one:/var/lib/zerotier-one:ro
+      - control-proxy-data:/secrets
+    entrypoint: ["sh","-c","\nfor i in 1 2 3 4 5 6 7 8 9 10; do\n  if [ -f /var/lib/zerotier-one/authtoken.secret ]; then\n    cp /var/lib/zerotier-one/authtoken.secret /secrets/authtoken.secret && chmod 600 /secrets/authtoken.secret && echo 'authtoken copied' && exit 0\n  fi\n  sleep 3\ndone\necho 'authtoken not found after wait' && exit 1\n"]
+    restart: "no"
+
   control-proxy:
     build:
       context: .
@@ -29,6 +40,7 @@ services:
     container_name: control-proxy
     depends_on:
       - planet
+      - init-token
     ports:
       - "8443:8443"
     environment:
