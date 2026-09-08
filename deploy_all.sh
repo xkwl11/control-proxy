@@ -3,13 +3,14 @@ set -euo pipefail
 
 # =============================================================================
 # 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
-# 修复内容：
+# 修复项：
 # - GitHub 多代理（2026年9月可用列表）
 # - 公网 IP 获取（阿里云元数据 eipv4 + 多个备用 API）
 # - Docker 镜像加速（多源）
 # - planet 服务使用本地构建（避免 Docker Hub 拉取失败）
 # - control-proxy 构建路径修正（指向 ./control-proxy）
 # - 云厂商内网资源优先（阿里/腾讯/华为）
+# - 完整的错误检查与输出
 # =============================================================================
 
 WORKDIR="/opt/zero-deploy"
@@ -17,7 +18,7 @@ CONTROL_PROXY_REPO="https://github.com/xkwl11/control-proxy.git"
 CONTROL_PROXY_BRANCH="fix/db-path"
 PLANET_REPO="https://github.com/xubiaolin/docker-zerotier-planet.git"
 
-# ========== GitHub 代理列表（按顺序尝试） ==========
+# ---------- GitHub 代理列表（按顺序尝试） ----------
 GITHUB_PROXIES=(
   "https://gh-proxy.com/"
   "https://ghproxy.homeboyc.cn/"
@@ -26,9 +27,8 @@ GITHUB_PROXIES=(
   "https://ghproxy.cxkpro.top/"
   "https://gitclone.com/"
 )
-# ===================================================
 
-# ========== Docker 镜像加速列表（多源） ==========
+# ---------- Docker 镜像加速列表（多源） ----------
 DOCKER_MIRRORS=(
   "https://docker.xuanyuan.me"
   "https://docker.m.daocloud.io"
@@ -36,7 +36,6 @@ DOCKER_MIRRORS=(
   "https://docker.1panel.live"
   "https://hub.rat.dev"
 )
-# =================================================
 
 echo "一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）"
 echo "工作目录: $WORKDIR"
@@ -48,20 +47,17 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# ========== 函数：检测云厂商 ==========
+# ---------- 检测云厂商 ----------
 detect_cloud_provider() {
   if curl -s --connect-timeout 1 -I http://100.100.100.200 >/dev/null 2>&1; then
-    echo "aliyun"
-    return
+    echo "aliyun"; return
   fi
   if curl -s --connect-timeout 1 -I http://metadata.tencentyun.com >/dev/null 2>&1; then
-    echo "tencent"
-    return
+    echo "tencent"; return
   fi
   if curl -s --connect-timeout 1 -I http://169.254.169.254 >/dev/null 2>&1; then
     if curl -s --connect-timeout 1 -I http://mirrors.huaweicloud.com >/dev/null 2>&1; then
-      echo "huawei"
-      return
+      echo "huawei"; return
     fi
   fi
   echo "unknown"
@@ -69,7 +65,7 @@ detect_cloud_provider() {
 CLOUD_PROVIDER=$(detect_cloud_provider)
 echo "检测到云厂商: $CLOUD_PROVIDER"
 
-# ========== 根据云厂商配置 apt 源 ==========
+# ---------- 配置 apt 源 ----------
 case "$CLOUD_PROVIDER" in
   aliyun)
     echo "配置阿里云内网 apt 源"
@@ -86,12 +82,11 @@ case "$CLOUD_PROVIDER" in
   *) echo "未识别的云厂商，使用默认源" ;;
 esac
 
-# ========== 系统准备 ==========
+# ---------- 系统准备 ----------
 apt-get update -y
-apt-get install -y --no-install-recommends \
-  ca-certificates curl gnupg lsb-release git jq
+apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release git jq
 
-# ========== 安装 Docker（优先使用云厂商内网源） ==========
+# ---------- 安装 Docker ----------
 if ! command -v docker >/dev/null 2>&1; then
   echo "安装 Docker..."
   case "$CLOUD_PROVIDER" in
@@ -120,7 +115,7 @@ else
   echo "检测到已安装 Docker"
 fi
 
-# ========== 安装 docker compose plugin ==========
+# ---------- 安装 docker compose plugin ----------
 if ! docker compose version >/dev/null 2>&1; then
   echo "安装 docker compose plugin..."
   apt-get update -y
@@ -129,17 +124,17 @@ else
   echo "检测到 docker compose 插件"
 fi
 
-# ========== 配置 Docker 镜像加速器（多源） ==========
+# ---------- 配置 Docker 镜像加速 ----------
 if [ ${#DOCKER_MIRRORS[@]} -gt 0 ]; then
   mkdir -p /etc/docker
   MIRROR_LIST=$(printf '"%s",' "${DOCKER_MIRRORS[@]}" | sed 's/,$//')
   if [ ! -f /etc/docker/daemon.json ]; then
     echo "配置 Docker 镜像加速器（多源）..."
-    cat > /etc/docker/daemon.json <<EOF
+    cat > /etc/docker/daemon.json <<EOC
 {
   "registry-mirrors": [${MIRROR_LIST}]
 }
-EOF
+EOC
     systemctl daemon-reload && systemctl restart docker
     echo "Docker 镜像加速配置完成"
   else
@@ -160,13 +155,13 @@ EOF
   fi
 fi
 
-# ========== 将当前用户加入 docker 组 ==========
+# ---------- 用户组 ----------
 if [ -n "${SUDO_USER-}" ] && [ "$SUDO_USER" != "root" ]; then
   usermod -aG docker "$SUDO_USER" || true
   echo "已将 $SUDO_USER 添加到 docker 组（需重新登录生效）"
 fi
 
-# ========== 辅助函数：带代理的 git clone ==========
+# ---------- 辅助函数：带代理的 git clone ----------
 clone_with_proxy() {
   local repo_url="$1" target_dir="$2" branch="${3:-}"
   for proxy in "${GITHUB_PROXIES[@]}"; do
@@ -182,49 +177,38 @@ clone_with_proxy() {
   return 1
 }
 
-# ========== 克隆/更新项目 ==========
+# ---------- 清理旧目录，全新开始 ----------
+rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR" && cd "$WORKDIR"
 
-if [ -d "docker-zerotier-planet" ]; then
-  echo "docker-zerotier-planet 已存在，尝试更新"
-  cd docker-zerotier-planet && git pull --ff-only || true && cd ..
-else
-  echo "克隆 docker-zerotier-planet (使用代理)..."
-  clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
-fi
+# ---------- 克隆项目 ----------
+echo "克隆 docker-zerotier-planet (使用代理)..."
+clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
 
-if [ -d "control-proxy" ]; then
-  echo "control-proxy 已存在，尝试更新并切换分支"
-  cd control-proxy && git fetch origin && git checkout "$CONTROL_PROXY_BRANCH" && git pull --ff-only origin "$CONTROL_PROXY_BRANCH" || true && cd ..
-else
-  echo "克隆 control-proxy (使用代理，分支 $CONTROL_PROXY_BRANCH)..."
-  clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
-fi
+echo "克隆 control-proxy (使用代理，分支 $CONTROL_PROXY_BRANCH)..."
+clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
 
-# ========== 生成 .env ==========
+# ---------- 生成 .env ----------
 if [ ! -f ".env" ]; then
   echo "生成 .env（包含 SERVER_SECRET）"
   SERVER_SECRET=$(openssl rand -hex 32 || head -c 32 /dev/urandom | xxd -p -c 32)
-  cat > .env <<EOF
+  cat > .env <<EOC
 SERVER_SECRET=$SERVER_SECRET
 CONTROLLER_URL=http://planet:3443
-EOF
+EOC
   echo ".env 已写入 $WORKDIR/.env"
 else
   echo ".env 已存在，跳过生成"
 fi
 
-# ========== 复制并修复 docker-compose.yml ==========
+# ---------- 复制并修复 docker-compose.yml ----------
 if [ -f "control-proxy/docker-compose.yml" ]; then
   echo "使用 control-proxy 仓库中的 docker-compose.yml"
   cp control-proxy/docker-compose.yml ./docker-compose.yml
 
-  # ----- 获取公网 IP（修复元数据地址，增加多个备用 API） -----
+  # ---- 获取公网 IP ----
   PUBLIC_IP=""
-  # 1. 尝试阿里云元数据（正确路径是 eipv4）
   PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null | grep -oE '([0-9]+\.){3}[0-9]+' || echo "")
-  
-  # 2. 如果失败，尝试多个公共 API
   if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     PUBLIC_IP=$(curl -s --connect-timeout 2 ifconfig.me 2>/dev/null || echo "")
   fi
@@ -237,15 +221,13 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
   if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     PUBLIC_IP=$(curl -s --connect-timeout 2 ipinfo.io/ip 2>/dev/null || echo "")
   fi
-  
-  # 3. 所有方法都失败则使用 127.0.0.1
   if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     PUBLIC_IP="127.0.0.1"
     echo "警告: 无法获取公网 IP，使用 127.0.0.1"
   fi
   echo "检测到公网 IP: $PUBLIC_IP"
 
-  # ----- 修复 planet 服务的 environment（注入 IP 等变量） -----
+  # ---- 修复 planet 的 environment ----
   sed -i '/^  planet:/,/^  [^ ]/ {
     /^    environment:/ {
       s/^    environment:.*/    environment:/
@@ -255,24 +237,37 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
     }
   }' ./docker-compose.yml
 
-  # ----- 将 planet 的 image 改为本地构建 -----
+  # ---- 修改 planet 为本地构建 ----
   sed -i '/^  planet:/,/^  [^ ]/ s|image: xubiaolin/zerotier-planet:latest|build: ./docker-zerotier-planet|' ./docker-compose.yml
 
-  # ----- 【关键修复】将 control-proxy 的 build 路径改为 ./control-proxy -----
-  sed -i '/^  control-proxy:/,/^  [^ ]/ s|build: .|build: ./control-proxy|' ./docker-compose.yml
+  # ---- 修正 control-proxy 构建路径（关键修复） ----
+  # 精确匹配 "    build: ." 并替换为 "    build: ./control-proxy"
+  sed -i '/^  control-proxy:/,/^  [^ ]/ {
+    s/^    build: \.$/    build: .\/control-proxy/
+  }' ./docker-compose.yml
+
+  # ---- 验证修改是否成功 ----
+  if grep -A 2 '^  control-proxy:' ./docker-compose.yml | grep -q 'build: ./control-proxy'; then
+    echo "✅ control-proxy 构建路径已成功修改为 ./control-proxy"
+  else
+    echo "❌ 错误：control-proxy 构建路径修改失败！"
+    echo "当前 control-proxy 服务块内容："
+    sed -n '/^  control-proxy:/,/^  [^ ]/p' ./docker-compose.yml
+    exit 1
+  fi
 
   echo "已为 planet 服务注入环境变量 IP_ADDR4=$PUBLIC_IP, ZT_PORT=9994, API_PORT=3443"
   echo "已将 planet 服务改为本地构建（使用 ./docker-zerotier-planet 目录）"
-  echo "已将 control-proxy 构建路径改为 ./control-proxy"
 else
-  echo "control-proxy 仓库中缺少 docker-compose.yml，使用现有仓库根目录的 compose 文件"
+  echo "control-proxy 仓库中缺少 docker-compose.yml，退出。"
+  exit 1
 fi
 
-# ========== 构建并启动 ==========
+# ---------- 构建并启动 ----------
 echo "开始构建并启动服务（可能需要一段时间）..."
 docker compose up -d --build
 
-# ========== 等待服务就绪 ==========
+# ---------- 等待服务就绪 ----------
 echo "等待 zerotier-planet 容器启动并生成 authtoken（最长等待 120 秒）..."
 for i in $(seq 1 40); do
   if docker ps --format '{{.Names}}' | grep -q '^zerotier-planet$'; then
@@ -300,7 +295,7 @@ for i in $(seq 1 20); do
   sleep 3
 done
 
-# ========== 输出后续指引 ==========
+# ---------- 输出后续指引 ----------
 cat <<EOF
 部署完成（或已启动）。下一步建议：
 1) 在 control-proxy 容器内部创建管理员：
