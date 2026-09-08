@@ -1,22 +1,15 @@
-<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>zui - control-proxy</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ZTNCUI Assets - control-proxy</title>
+  <link rel="stylesheet" href="/zui/static/stylesheets/style.css" />
+  <link rel="stylesheet" href="/zui/static/custom.css" />
 </head>
 <body>
-  <h1>zui placeholder</h1>
-  <p>This is a minimal placeholder for the ZTNCUI-derived frontend. Replace with your SPA build in views/zui/dist or views/zui/static.</p>
-  <ul>
-    <li><a href="/admin">Admin UI</a></li>
-    <li>Available API endpoints (examples):</li>
-    <ul>
-      <li>POST /api/register {username,password}</li>
-      <li>POST /api/login {username,password} -> {token}</li>
-      <li>GET /api/zui/networks (Bearer token)</li>
-      <li>POST /api/zui/networks (admin)</li>
-    </ul>
-  </ul>
+  <div class="container">
+    <h1>ZTNCUI Static Assets (partial)</h1>
+    <p>These are static public assets copied from key-networks/ztncui. For full functionality, run ztncui server or replace with complete build artifacts.</p>
+    <p>Use the controller proxy at /controller/ to let ztncui talk to the real controller via control-proxy (X-ZT1-Auth is injected server-side).</p>
+  </div>
 </body>
 </html>
