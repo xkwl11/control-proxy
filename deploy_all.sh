@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# =============================================================================
+# 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
+# 修复内容：
+# - GitHub 多代理（2026年9月可用列表）
+# - 公网 IP 获取（阿里云元数据 eipv4 + 多个备用 API）
+# - Docker 镜像加速（多源）
+# - planet 服务使用本地构建（避免 Docker Hub 拉取失败）
+# - 云厂商内网资源优先（阿里/腾讯/华为）
+# =============================================================================
+
 WORKDIR="/opt/zero-deploy"
 CONTROL_PROXY_REPO="https://github.com/xkwl11/control-proxy.git"
 CONTROL_PROXY_BRANCH="fix/db-path"
 PLANET_REPO="https://github.com/xubiaolin/docker-zerotier-planet.git"
 
-# ========== GitHub 代理列表（2026年9月实测可用） ==========
+# ========== GitHub 代理列表（按顺序尝试） ==========
 GITHUB_PROXIES=(
   "https://ghproxy.net/"
   "https://gh-proxy.com/"
@@ -16,9 +26,9 @@ GITHUB_PROXIES=(
   "https://ghproxy.cxkpro.top/"
   "https://gitclone.com/"
 )
-# ===========================================================
+# ===================================================
 
-# ========== Docker 镜像加速列表 ==========
+# ========== Docker 镜像加速列表（多源） ==========
 DOCKER_MIRRORS=(
   "https://docker.xuanyuan.me"
   "https://docker.m.daocloud.io"
@@ -26,7 +36,7 @@ DOCKER_MIRRORS=(
   "https://docker.1panel.live"
   "https://hub.rat.dev"
 )
-# ========================================
+# =================================================
 
 echo "一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）"
 echo "工作目录: $WORKDIR"
@@ -235,7 +245,7 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
   fi
   echo "检测到公网 IP: $PUBLIC_IP"
 
-  # ----- 修复 planet 服务的 environment -----
+  # ----- 修复 planet 服务的 environment（注入 IP 等变量） -----
   sed -i '/^  planet:/,/^  [^ ]/ {
     /^    environment:/ {
       s/^    environment:.*/    environment:/
@@ -245,7 +255,11 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
     }
   }' ./docker-compose.yml
 
+  # ----- 【关键修复】将 planet 的 image 改为本地构建，避免拉取失败 -----
+  sed -i '/^  planet:/,/^  [^ ]/ s|image: xubiaolin/zerotier-planet:latest|build: ./docker-zerotier-planet|' ./docker-compose.yml
+
   echo "已为 planet 服务注入环境变量 IP_ADDR4=$PUBLIC_IP, ZT_PORT=9994, API_PORT=3443"
+  echo "已将 planet 服务改为本地构建（使用 ./docker-zerotier-planet 目录）"
 else
   echo "control-proxy 仓库中缺少 docker-compose.yml，使用现有仓库根目录的 compose 文件"
 fi
