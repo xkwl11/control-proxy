@@ -20,14 +20,28 @@ Minimal control-proxy for ZeroTier Planet.
 
 1) 在服务器上下载并查看脚本（推荐先查看再执行）
 
+# 可选择两种脚本：
+# - deploy_all.sh：自动化部署并尝试复制 token（适合快速一键部署）
+# - deploy_packaged.sh：交互式/可回滚版本，带 --yes / --rollback 选项（推荐熟悉后使用）
+
 sudo mkdir -p /opt/zero-deploy
-sudo curl -fsSL -o /opt/zero-deploy/deploy_all.sh https://raw.githubusercontent.com/xkwl11/control-proxy/fix/db-path/deploy_all.sh
+# 下载自动化脚本（raw）：
+sudo curl -fsSL -o /opt/zero-deploy/deploy_all.sh https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh
 sudo chmod +x /opt/zero-deploy/deploy_all.sh
+# 下载交互/打包脚本（raw，可选）：
+sudo curl -fsSL -o /opt/zero-deploy/deploy_packaged.sh https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_packaged.sh
+sudo chmod +x /opt/zero-deploy/deploy_packaged.sh
+
+# 查看脚本内容（务必先检查）：
 sudo less /opt/zero-deploy/deploy_all.sh
 
 2) 运行脚本（以 root 或 sudo 运行）
 
-sudo /opt/zero-deploy/deploy_all.sh
+# 非交互一键运行（快速）
+sudo /opt/zero-deploy/deploy_all.sh --yes
+
+# 或使用交互/可回滚脚本（推荐首次运行）：
+sudo /opt/zero-deploy/deploy_packaged.sh
 
 脚本会：
 - 安装必要系统包（git、curl、openssl、jq 等），安装 Docker 与 docker compose 插件；
@@ -70,4 +84,11 @@ docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: applicati
 - control-proxy 调用 controller 报错（controller call failed）：检查 CONTROLLER_URL（默认 compose 指向 http://planet:3443），确认 planet API 端口是否匹配；确认 authtoken 是否有效并已复制。
 - 数据库写入或权限问题：查看卷权限或容器内 /data 的权限，必要时调整宿主机目录权限或运行容器时指定 --user。
 
+其它说明
+- docker-compose.yml、deploy_all.sh、deploy_packaged.sh 都已放在 main 分支，可直接通过 raw 链接下载：
+  - https://raw.githubusercontent.com/xkwl11/control-proxy/main/docker-compose.yml
+  - https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh
+  - https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_packaged.sh
+
+- 如果你愿意，我可以把 control-proxy 的 fix/db-path 分支的改动合并入 main（已完成），或继续增强 init-token 的查找逻辑以支持更多 planet 实现。
 
