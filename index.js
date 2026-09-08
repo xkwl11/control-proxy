@@ -8,6 +8,8 @@ const applyRoutes = require('./routes/apply');
 const joinRoutes = require('./routes/join');
 const adminRoutes = require('./routes/admin');
 const inviteRoutes = require('./routes/invite');
+const authRoutes = require('./routes/auth');
+const zuiRoutes = require('./routes/zui');
 
 const app = express();
 app.use(helmet());
@@ -15,14 +17,23 @@ app.use(morgan('combined'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
+app.use('/api', authRoutes);
 app.use('/api', applyRoutes);
 app.use('/api', joinRoutes);
 app.use('/api', inviteRoutes);
+app.use('/api/zui', zuiRoutes);
+
+// serve zui static files and SPA fallback
+app.use('/zui/static', express.static(path.join(__dirname, 'views', 'zui', 'static')));
+app.get('/zui/*', (req,res) => {
+  res.sendFile(path.join(__dirname, 'views', 'zui', 'index.html'));
+});
 
 app.use('/admin', function(req,res,next){
   const ip = req.ip || req.connection.remoteAddress;
   if (ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1') return next();
-  res.status(403).send('Admin UI only accessible from localhost');
+  // non-localhost must be authenticated as admin (auth middleware in adminRoutes will also check)
+  res.status(403).send('Admin UI only accessible from localhost or authenticated admin');
 });
 app.use('/admin', adminRoutes);
 

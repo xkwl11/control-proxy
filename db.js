@@ -11,6 +11,12 @@ function init() {
   db.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, detail TEXT, actor TEXT, ts INTEGER
   )`).run();
+  db.prepare(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, role TEXT, created_at INTEGER
+  )`).run();
+  db.prepare(`CREATE TABLE IF NOT EXISTS networks (
+    id TEXT PRIMARY KEY, nwid TEXT, name TEXT, created_by TEXT, created_at INTEGER
+  )`).run();
 }
 
 init();
