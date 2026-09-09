@@ -7,7 +7,6 @@ services:
     ports:
       - "9994:9994"
       - "9994:9994/udp"
-      # 移除 "3443:3443" 对外暴露
     environment:
       - IP_ADDR4=${IP_ADDR4}
       - ZT_PORT=${ZT_PORT:-9994}
