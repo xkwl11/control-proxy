@@ -3,7 +3,7 @@ set -euo pipefail
 
 # =============================================================================
 # 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
-# 终极版：自动替换 Dockerfile 为支持 ARG 的版本，彻底解决源过期问题
+# 最终版：使用清华大学镜像源（稳定可靠），避免阿里云内网源过期问题
 # =============================================================================
 
 WORKDIR="/opt/zero-deploy"
@@ -182,7 +182,7 @@ clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
 # ---------- ★★★ 自动替换 Dockerfile 为支持 ARG 的版本 ★★★ ----------
 echo "→ 检查并替换 Dockerfile 为支持 ARG DEBIAN_MIRROR 的版本..."
 cat > control-proxy/Dockerfile << 'EOF'
-ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
+ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn
 
 FROM node:18-bullseye AS builder
 ARG DEBIAN_MIRROR
@@ -288,17 +288,12 @@ else
   exit 1
 fi
 
-# ---- 动态注入 Debian 镜像源 ----
-case "$CLOUD_PROVIDER" in
-  aliyun)   DEBIAN_MIRROR="http://mirrors.cloud.aliyuncs.com" ;;
-  tencent)  DEBIAN_MIRROR="http://mirrors.tencentyun.com" ;;
-  huawei)   DEBIAN_MIRROR="http://mirrors.huaweicloud.com" ;;
-  *)        DEBIAN_MIRROR="http://mirrors.aliyun.com" ;;
-esac
+# ---- ★★★ 动态注入 Debian 镜像源（使用清华源，稳定可靠） ★★★ ----
+# 无论云厂商如何，统一使用清华源（阿里云内网源已过期）
+DEBIAN_MIRROR="http://mirrors.tuna.tsinghua.edu.cn"
 echo "→ 使用 Debian 镜像源: $DEBIAN_MIRROR"
 
 echo "→ 注入 DEBIAN_MIRROR 到 control-proxy 构建参数..."
-# 使用 | 分隔符，匹配行可能带有注释（.*）
 sed -i '/^  control-proxy:/,/^  [^ ]/ {
     s|^    build: .\/control-proxy.*|    build:\n      context: .\/control-proxy\n      args:\n        DEBIAN_MIRROR: '"$DEBIAN_MIRROR"'|
 }' ./docker-compose.yml
@@ -310,7 +305,6 @@ else
   echo "❌ 错误：注入 DEBIAN_MIRROR 失败！"
   echo "当前 control-proxy 构建块内容："
   sed -n '/^  control-proxy:/,/^  [^ ]/p' ./docker-compose.yml
-  echo "请检查 docker-compose.yml 文件，或手动修改后重新运行构建。"
   exit 1
 fi
 
