@@ -3,7 +3,7 @@ set -euo pipefail
 
 # =============================================================================
 # 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
-# 增强版：详细错误输出，自动验证 sed 修改
+# 终极版：自动替换 Dockerfile 为支持 ARG 的版本，彻底解决源过期问题
 # =============================================================================
 
 WORKDIR="/opt/zero-deploy"
@@ -11,7 +11,7 @@ CONTROL_PROXY_REPO="https://github.com/xkwl11/control-proxy.git"
 CONTROL_PROXY_BRANCH="fix/db-path"
 PLANET_REPO="https://github.com/xubiaolin/docker-zerotier-planet.git"
 
-# ---------- GitHub 代理列表 ----------
+# ---------- GitHub 代理 ----------
 GITHUB_PROXIES=(
   "https://gh-proxy.com/"
   "https://ghproxy.homeboyc.cn/"
@@ -45,16 +45,10 @@ fi
 # ---------- 检测云厂商 ----------
 echo "→ 检测云厂商..."
 detect_cloud_provider() {
-  if curl -s --connect-timeout 1 -I http://100.100.100.200 >/dev/null 2>&1; then
-    echo "aliyun"; return
-  fi
-  if curl -s --connect-timeout 1 -I http://metadata.tencentyun.com >/dev/null 2>&1; then
-    echo "tencent"; return
-  fi
+  if curl -s --connect-timeout 1 -I http://100.100.100.200 >/dev/null 2>&1; then echo "aliyun"; return; fi
+  if curl -s --connect-timeout 1 -I http://metadata.tencentyun.com >/dev/null 2>&1; then echo "tencent"; return; fi
   if curl -s --connect-timeout 1 -I http://169.254.169.254 >/dev/null 2>&1; then
-    if curl -s --connect-timeout 1 -I http://mirrors.huaweicloud.com >/dev/null 2>&1; then
-      echo "huawei"; return
-    fi
+    if curl -s --connect-timeout 1 -I http://mirrors.huaweicloud.com >/dev/null 2>&1; then echo "huawei"; return; fi
   fi
   echo "unknown"
 }
@@ -184,6 +178,40 @@ clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
 
 echo "→ 克隆 control-proxy (分支 $CONTROL_PROXY_BRANCH)..."
 clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
+
+# ---------- ★★★ 自动替换 Dockerfile 为支持 ARG 的版本 ★★★ ----------
+echo "→ 检查并替换 Dockerfile 为支持 ARG DEBIAN_MIRROR 的版本..."
+cat > control-proxy/Dockerfile << 'EOF'
+ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
+
+FROM node:18-bullseye AS builder
+ARG DEBIAN_MIRROR
+WORKDIR /app
+RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 build-essential libsqlite3-dev && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json* ./
+RUN npm install --production
+COPY . .
+
+FROM node:18-slim
+ARG DEBIAN_MIRROR
+WORKDIR /app
+RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlite3-0 curl && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app ./
+EXPOSE 8443
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -f http://localhost:8443/ || exit 1
+CMD ["node", "index.js"]
+EOF
+echo "✅ Dockerfile 已更新为支持 ARG 的版本"
 
 # ---------- 生成 .env ----------
 if [ ! -f ".env" ]; then
