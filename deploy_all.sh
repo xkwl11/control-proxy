@@ -10,6 +10,7 @@ set -euo pipefail
 # - planet 服务使用本地构建（避免 Docker Hub 拉取失败）
 # - control-proxy 构建路径修正（指向 ./control-proxy）
 # - 云厂商内网资源优先（阿里/腾讯/华为）
+# - 动态注入 Debian 镜像源（构建时通过 args 传递）
 # - 完整的错误检查与输出
 # =============================================================================
 
@@ -256,6 +257,31 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
     exit 1
   fi
 
+  # ---- ★★★ 新增：动态注入 Debian 镜像源（根据云厂商） ★★★ ----
+  case "$CLOUD_PROVIDER" in
+    aliyun)
+      DEBIAN_MIRROR="http://mirrors.cloud.aliyuncs.com"
+      ;;
+    tencent)
+      DEBIAN_MIRROR="http://mirrors.tencentyun.com"
+      ;;
+    huawei)
+      DEBIAN_MIRROR="http://mirrors.huaweicloud.com"
+      ;;
+    *)
+      DEBIAN_MIRROR="http://mirrors.aliyun.com"
+      ;;
+  esac
+  echo "使用 Debian 镜像源: $DEBIAN_MIRROR"
+
+  # 将 control-proxy 的 build 改为多行格式，传入 DEBIAN_MIRROR
+  sed -i '/^  control-proxy:/,/^  [^ ]/ {
+    s/^    build: .\/control-proxy$/    build:\n      context: .\/control-proxy\n      args:\n        DEBIAN_MIRROR: '"$DEBIAN_MIRROR"'/
+  }' ./docker-compose.yml
+
+  echo "✅ 已为 control-proxy 构建注入 DEBIAN_MIRROR=$DEBIAN_MIRROR"
+  # ---- 新增部分结束 ----
+
   echo "已为 planet 服务注入环境变量 IP_ADDR4=$PUBLIC_IP, ZT_PORT=9994, API_PORT=3443"
   echo "已将 planet 服务改为本地构建（使用 ./docker-zerotier-planet 目录）"
 else
@@ -311,6 +337,10 @@ cat <<EOF
 常见问题排查：
 - better-sqlite3 构建失败：查看 docker compose build 输出。
 - token 未找到：检查 zerotier-planet 容器内 /var/lib/zerotier-one 路径。
+
+EOF
+
+exit 0
 
 EOF
 
