@@ -1,32 +1,26 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const axios = require('axios');
-const { authenticateJWT } = require('./auth'); // 确保路径正确
+const { authenticateJWT } = require('./auth'); // 确保该中间件存在
 
 const router = express.Router();
 
-// 配置从环境变量读取
 const ZTNCUI_TARGET = process.env.ZTNCUI_TARGET || 'http://planet:3443';
 const ZTNCUI_USER = process.env.ZTNCUI_USER || 'admin';
 const ZTNCUI_PASS = process.env.ZTNCUI_PASS || 'password';
 
-// 缓存每个用户的 ztncui session cookie（key: userId）
 const sessionCache = new Map();
 
-// 解析 ztncui 的登录响应，提取 session cookie
 async function loginToZtncui() {
   try {
-    // 假设 ztncui 登录 endpoint 为 /login，使用表单提交
     const loginUrl = `${ZTNCUI_TARGET}/login`;
-    const response = await axios.post(loginUrl, 
+    const response = await axios.post(loginUrl,
       new URLSearchParams({
         username: ZTNCUI_USER,
         password: ZTNCUI_PASS
       }).toString(),
       {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         maxRedirects: 0,
         validateStatus: (status) => status < 400 || status === 302
       }
@@ -43,15 +37,13 @@ async function loginToZtncui() {
   }
 }
 
-// 创建代理中间件
 const proxyMiddleware = createProxyMiddleware({
   target: ZTNCUI_TARGET,
   changeOrigin: true,
   onProxyReq: (proxyReq, req, res) => {
     const userId = req.user?.id;
     if (userId && sessionCache.has(userId)) {
-      const cookie = sessionCache.get(userId);
-      proxyReq.setHeader('Cookie', cookie);
+      proxyReq.setHeader('Cookie', sessionCache.get(userId));
     }
   },
   onProxyRes: (proxyRes, req, res) => {
@@ -71,13 +63,12 @@ const proxyMiddleware = createProxyMiddleware({
   }
 });
 
-// 认证中间件 + 代理
-router.use('/ztncui', authenticateJWT, async (req, res, next) => {
+// 所有请求都先经过 JWT 认证
+router.use('/', authenticateJWT, async (req, res, next) => {
   const userId = req.user?.id;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-
   let cookie = sessionCache.get(userId);
   if (!cookie) {
     cookie = await loginToZtncui();
@@ -87,8 +78,10 @@ router.use('/ztncui', authenticateJWT, async (req, res, next) => {
       return res.status(503).json({ error: 'Could not authenticate with ztncui' });
     }
   }
-
-  proxyMiddleware(req, res, next);
+  next();
 });
+
+// 代理所有请求（包括静态资源、页面、API）
+router.use('/', proxyMiddleware);
 
 module.exports = router;
