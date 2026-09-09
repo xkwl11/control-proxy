@@ -1,38 +1,40 @@
+# 定义构建参数（由 compose 传入）
+ARG DEBIAN_MIRROR=http://mirrors.aliyun.com
+
 FROM node:18-bullseye AS builder
+ARG DEBIAN_MIRROR
 WORKDIR /app
 
-# 覆盖为清华源（替换默认源）
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+# 配置 Debian 源（使用传入的镜像地址）
+RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
 
-# 安装构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  python3 \
-  build-essential \
-  libsqlite3-dev \
-  && rm -rf /var/lib/apt/lists/*
+    python3 \
+    build-essential \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
 RUN npm install --production
-
 COPY . .
 
 FROM node:18-slim
+ARG DEBIAN_MIRROR
 WORKDIR /app
 
-# 覆盖为清华源（第二阶段同样处理）
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+# 同样配置源
+RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  libsqlite3-0 \
-  curl \
-  && rm -rf /var/lib/apt/lists/*
+    libsqlite3-0 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
-
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app ./
 
