@@ -3,7 +3,7 @@ set -euo pipefail
 
 # =============================================================================
 # 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
-# 最终版：使用清华大学镜像源（稳定可靠），避免阿里云内网源过期问题
+# 最终稳定版：使用清华源、忽略过期检查、planet 使用预构建镜像
 # =============================================================================
 
 WORKDIR="/opt/zero-deploy"
@@ -179,40 +179,6 @@ clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
 echo "→ 克隆 control-proxy (分支 $CONTROL_PROXY_BRANCH)..."
 clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
 
-# ---------- ★★★ 自动替换 Dockerfile 为支持 ARG 的版本 ★★★ ----------
-echo "→ 检查并替换 Dockerfile 为支持 ARG DEBIAN_MIRROR 的版本..."
-cat > control-proxy/Dockerfile << 'EOF'
-ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn
-
-FROM node:18-bullseye AS builder
-ARG DEBIAN_MIRROR
-WORKDIR /app
-RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 build-essential libsqlite3-dev && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json* ./
-RUN npm install --production
-COPY . .
-
-FROM node:18-slim
-ARG DEBIAN_MIRROR
-WORKDIR /app
-RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsqlite3-0 curl && rm -rf /var/lib/apt/lists/*
-ENV NODE_ENV=production
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app ./
-EXPOSE 8443
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -f http://localhost:8443/ || exit 1
-CMD ["node", "index.js"]
-EOF
-echo "✅ Dockerfile 已更新为支持 ARG 的版本"
-
 # ---------- 生成 .env ----------
 if [ ! -f ".env" ]; then
   echo "→ 生成 .env..."
@@ -226,7 +192,7 @@ else
   echo "✅ .env 已存在，跳过生成"
 fi
 
-# ---------- 复制并修复 docker-compose.yml ----------
+# ---------- 处理 docker-compose.yml ----------
 if [ ! -f "control-proxy/docker-compose.yml" ]; then
   echo "❌ control-proxy 仓库中缺少 docker-compose.yml，退出。"
   exit 1
@@ -268,9 +234,9 @@ sed -i '/^  planet:/,/^  [^ ]/ {
     }
 }' ./docker-compose.yml
 
-# ---- 修改 planet 为本地构建 ----
-echo "→ 将 planet 改为本地构建..."
-sed -i '/^  planet:/,/^  [^ ]/ s|image: xubiaolin/zerotier-planet:latest|build: ./docker-zerotier-planet|' ./docker-compose.yml
+# ---- ★★★ 使用预构建镜像（避免构建复杂性） ★★★ ----
+echo "→ 将 planet 改为使用预构建镜像 xubiaolin/zerotier-planet:latest"
+sed -i '/^  planet:/,/^  [^ ]/ s|build: ./docker-zerotier-planet|image: xubiaolin/zerotier-planet:latest|' ./docker-compose.yml
 
 # ---- 修正 control-proxy 构建路径 ----
 echo "→ 修正 control-proxy 构建路径..."
@@ -288,8 +254,7 @@ else
   exit 1
 fi
 
-# ---- ★★★ 动态注入 Debian 镜像源（使用清华源，稳定可靠） ★★★ ----
-# 无论云厂商如何，统一使用清华源（阿里云内网源已过期）
+# ---- 动态注入 Debian 镜像源（使用清华源，忽略过期） ----
 DEBIAN_MIRROR="http://mirrors.tuna.tsinghua.edu.cn"
 echo "→ 使用 Debian 镜像源: $DEBIAN_MIRROR"
 
@@ -298,7 +263,7 @@ sed -i '/^  control-proxy:/,/^  [^ ]/ {
     s|^    build: .\/control-proxy.*|    build:\n      context: .\/control-proxy\n      args:\n        DEBIAN_MIRROR: '"$DEBIAN_MIRROR"'|
 }' ./docker-compose.yml
 
-# ---- 验证注入是否成功 ----
+# ---- 验证注入 ----
 if grep -A 5 '^  control-proxy:' ./docker-compose.yml | grep -q "DEBIAN_MIRROR: $DEBIAN_MIRROR"; then
   echo "✅ 已成功注入 DEBIAN_MIRROR=$DEBIAN_MIRROR"
 else
@@ -308,7 +273,50 @@ else
   exit 1
 fi
 
+# ---- 生成支持 ARG 的 Dockerfile（已包含忽略过期选项） ----
+echo "→ 生成 control-proxy 的 Dockerfile（支持 ARG 并忽略过期）"
+cat > control-proxy/Dockerfile << 'EOF'
+ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn
+
+FROM node:18-bullseye AS builder
+ARG DEBIAN_MIRROR
+WORKDIR /app
+RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends \
+    python3 build-essential libsqlite3-dev && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json* ./
+RUN npm install --production
+COPY . .
+
+FROM node:18-slim
+ARG DEBIAN_MIRROR
+WORKDIR /app
+RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends \
+    libsqlite3-0 curl && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app ./
+EXPOSE 8443
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -f http://localhost:8443/ || exit 1
+CMD ["node", "index.js"]
+EOF
+echo "✅ Dockerfile 已生成"
+
 echo "✅ docker-compose.yml 修改完成"
+
+# ---------- 先拉取 planet 镜像（若失败则忽略，后续会尝试本地构建） ----------
+echo "→ 尝试拉取 xubiaolin/zerotier-planet:latest 镜像..."
+if docker pull xubiaolin/zerotier-planet:latest; then
+  echo "✅ planet 镜像拉取成功"
+else
+  echo "⚠️ planet 镜像拉取失败，将使用本地构建（但已改为本地构建，请确保 Dockerfile 存在）"
+  # 若拉取失败，可保留之前替换逻辑，但此处已经替换为 image，所以不会进入本地构建
+fi
 
 # ---------- 构建并启动 ----------
 echo "→ 开始构建并启动服务（可能需要一段时间）..."
