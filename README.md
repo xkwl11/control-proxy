@@ -17,20 +17,10 @@ Minimal control-proxy for ZeroTier Planet.
 
 mkdir -p "$HOME/zero-deploy"
 
-# 如果仓库为 public：
-curl -fsSL -o "$HOME/zero-deploy/deploy_all.sh" "https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh"
-chmod +x "$HOME/zero-deploy/deploy_all.sh"
+# 一键执行脚本
 
-# 如果仓库为 private：
-# 方法 A（使用 PAT，替换 TOKEN，务必保密）：
-# curl -fsSL -H "Authorization: token TOKEN" -H "Accept: application/vnd.github.v3.raw" \
-#   -o "$HOME/zero-deploy/deploy_all.sh" \
-#   "https://api.github.com/repos/xkwl11/control-proxy/contents/deploy_all.sh?ref=main"
-# chmod +x "$HOME/zero-deploy/deploy_all.sh"
+# curl -fsSL "https://ghproxy.net/https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh" | sudo bash -s -- --yes"
 
-# 方法 B（使用 gh CLI，需 gh auth login）：
-# gh api repos/xkwl11/control-proxy/contents/deploy_all.sh --raw > "$HOME/zero-deploy/deploy_all.sh"
-# chmod +x "$HOME/zero-deploy/deploy_all.sh"
 
 2) 查看脚本（务必先检查，防止下载到 HTML/404 页面）
 
