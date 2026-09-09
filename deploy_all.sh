@@ -242,7 +242,6 @@ if [ -f "control-proxy/docker-compose.yml" ]; then
   sed -i '/^  planet:/,/^  [^ ]/ s|image: xubiaolin/zerotier-planet:latest|build: ./docker-zerotier-planet|' ./docker-compose.yml
 
   # ---- 修正 control-proxy 构建路径（关键修复） ----
-  # 精确匹配 "    build: ." 并替换为 "    build: ./control-proxy"
   sed -i '/^  control-proxy:/,/^  [^ ]/ {
     s/^    build: \.$/    build: .\/control-proxy/
   }' ./docker-compose.yml
