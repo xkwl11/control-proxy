@@ -201,6 +201,17 @@ fi
 echo "→ 使用 control-proxy 仓库中的 docker-compose.yml"
 cp control-proxy/docker-compose.yml ./docker-compose.yml
 
+# ---- 自动集成 ztncui 代理 ----
+# 移除 planet 的 3443 端口映射（如果存在）
+sed -i '/^  planet:/,/^  [^ ]/ { /"3443:3443"/d }' ./docker-compose.yml
+
+# 确保 .env 包含 ztncui 配置（若缺失则追加）
+if [ -f ".env" ]; then
+  grep -q "ZTNCUI_TARGET" .env || echo "ZTNCUI_TARGET=http://planet:3443" >> .env
+  grep -q "ZTNCUI_USER" .env || echo "ZTNCUI_USER=admin" >> .env
+  grep -q "ZTNCUI_PASS" .env || echo "ZTNCUI_PASS=password" >> .env
+fi
+
 # ---- 获取公网 IP ----
 echo "→ 获取公网 IP..."
 PUBLIC_IP=""
