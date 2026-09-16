@@ -3,7 +3,7 @@ set -euo pipefail
 
 # =============================================================================
 # 一键部署 control-proxy + docker-zerotier-planet（Ubuntu 26.04）
-# 最终稳定版：使用清华源、忽略过期检查、planet 使用预构建镜像
+# 最终版：Nginx 反代 ztncui + JWT 认证 + 网页登录/注册 + planet 下载
 # =============================================================================
 
 WORKDIR="/opt/zero-deploy"
@@ -59,15 +59,15 @@ echo "✅ 检测到云厂商: $CLOUD_PROVIDER"
 case "$CLOUD_PROVIDER" in
   aliyun)
     echo "→ 配置阿里云内网 apt 源"
-    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.aliyuncs.com/ubuntu/|g' /etc/apt/sources.list
+    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.aliyuncs.com/ubuntu/|g' /etc/apt/sources.list 2>/dev/null || true
     ;;
   tencent)
     echo "→ 配置腾讯云内网 apt 源"
-    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list
+    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.tencentyun.com/ubuntu/|g' /etc/apt/sources.list 2>/dev/null || true
     ;;
   huawei)
     echo "→ 配置华为云内网 apt 源"
-    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.huaweicloud.com/ubuntu/|g' /etc/apt/sources.list
+    sed -i 's|^deb http://.*/ubuntu/|deb http://mirrors.huaweicloud.com/ubuntu/|g' /etc/apt/sources.list 2>/dev/null || true
     ;;
   *) echo "未识别的云厂商，使用默认源" ;;
 esac
@@ -138,7 +138,7 @@ EOC
         systemctl daemon-reload && systemctl restart docker
         echo "✅ Docker 镜像加速配置已合并"
       else
-        echo "⚠️ 警告: 未安装 jq，无法自动合并，请手动添加 registry-mirrors"
+        echo "⚠️ 警告: 未安装 jq，无法自动合并 daemon.json，请手动添加 registry-mirrors"
       fi
     else
       echo "✅ daemon.json 已包含 registry-mirrors，跳过配置"
@@ -179,40 +179,18 @@ clone_with_proxy "$PLANET_REPO" "docker-zerotier-planet" ""
 echo "→ 克隆 control-proxy (分支 $CONTROL_PROXY_BRANCH)..."
 clone_with_proxy "$CONTROL_PROXY_REPO" "control-proxy" "$CONTROL_PROXY_BRANCH"
 
-# ---------- 生成 .env ----------
-if [ ! -f ".env" ]; then
-  echo "→ 生成 .env..."
-  SERVER_SECRET=$(openssl rand -hex 32 || head -c 32 /dev/urandom | xxd -p -c 32)
-  cat > .env <<EOC
-SERVER_SECRET=$SERVER_SECRET
-CONTROLLER_URL=http://planet:3443
-EOC
-  echo "✅ .env 已写入 $WORKDIR/.env"
-else
-  echo "✅ .env 已存在，跳过生成"
-fi
-
-# ---------- 处理 docker-compose.yml ----------
-if [ ! -f "control-proxy/docker-compose.yml" ]; then
-  echo "❌ control-proxy 仓库中缺少 docker-compose.yml，退出。"
-  exit 1
-fi
-
-echo "→ 使用 control-proxy 仓库中的 docker-compose.yml"
+# ---------- 复制核心文件到工作目录 ----------
+echo "→ 复制 docker-compose.yml 和 nginx 配置..."
 cp control-proxy/docker-compose.yml ./docker-compose.yml
+mkdir -p ./nginx
+cp control-proxy/nginx/ztncui.conf ./nginx/ztncui.conf
 
-# ---- 自动集成 ztncui 代理 ----
-# 移除 planet 的 3443 端口映射（如果存在）
-sed -i '/^  planet:/,/^  [^ ]/ { /"3443:3443"/d }' ./docker-compose.yml
+# ---------- 创建 planet-config 并写入端口 ----------
+echo "→ 创建 planet-config 目录并写入端口..."
+mkdir -p ./planet-config
+echo 9994 > ./planet-config/zerotier-one.port
 
-# 确保 .env 包含 ztncui 配置（若缺失则追加）
-if [ -f ".env" ]; then
-  grep -q "ZTNCUI_TARGET" .env || echo "ZTNCUI_TARGET=http://planet:3443" >> .env
-  grep -q "ZTNCUI_USER" .env || echo "ZTNCUI_USER=admin" >> .env
-  grep -q "ZTNCUI_PASS" .env || echo "ZTNCUI_PASS=password" >> .env
-fi
-
-# ---- 获取公网 IP ----
+# ---------- 获取公网 IP ----------
 echo "→ 获取公网 IP..."
 PUBLIC_IP=""
 PUBLIC_IP=$(curl -s --connect-timeout 2 http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null | grep -oE '([0-9]+\.){3}[0-9]+' || echo "")
@@ -226,107 +204,25 @@ if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   PUBLIC_IP=$(curl -s --connect-timeout 2 icanhazip.com 2>/dev/null || echo "")
 fi
 if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  PUBLIC_IP=$(curl -s --connect-timeout 2 ipinfo.io/ip 2>/dev/null || echo "")
-fi
-if [[ ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   PUBLIC_IP="127.0.0.1"
   echo "⚠️ 警告: 无法获取公网 IP，使用 127.0.0.1"
 fi
 echo "✅ 检测到公网 IP: $PUBLIC_IP"
 
-# ---- 修复 planet 的 environment ----
-echo "→ 修复 planet 服务的 environment..."
-sed -i '/^  planet:/,/^  [^ ]/ {
-    /^    environment:/ {
-      s/^    environment:.*/    environment:/
-      a\      IP_ADDR4: '"$PUBLIC_IP"'
-      a\      ZT_PORT: 9994
-      a\      API_PORT: 3443
-    }
-}' ./docker-compose.yml
-
-# ---- ★★★ 使用预构建镜像（避免构建复杂性） ★★★ ----
-echo "→ 将 planet 改为使用预构建镜像 xubiaolin/zerotier-planet:latest"
-sed -i '/^  planet:/,/^  [^ ]/ s|build: ./docker-zerotier-planet|image: xubiaolin/zerotier-planet:latest|' ./docker-compose.yml
-
-# ---- 修正 control-proxy 构建路径 ----
-echo "→ 修正 control-proxy 构建路径..."
-sed -i '/^  control-proxy:/,/^  [^ ]/ {
-    s/^    build: \.$/    build: .\/control-proxy/
-}' ./docker-compose.yml
-
-# ---- 验证路径修改 ----
-if grep -A 2 '^  control-proxy:' ./docker-compose.yml | grep -q 'build: ./control-proxy'; then
-  echo "✅ control-proxy 构建路径已成功修改为 ./control-proxy"
+# ---------- 生成 .env ----------
+if [ ! -f ".env" ]; then
+  echo "→ 生成 .env..."
+  SERVER_SECRET=$(openssl rand -hex 32 || head -c 32 /dev/urandom | xxd -p -c 32)
+  cat > .env <<EOC
+SERVER_SECRET=$SERVER_SECRET
+CONTROLLER_URL=http://planet:3443
+IP_ADDR4=$PUBLIC_IP
+ZT_PORT=9994
+API_PORT=3443
+EOC
+  echo "✅ .env 已写入 $WORKDIR/.env"
 else
-  echo "❌ 错误：control-proxy 构建路径修改失败！"
-  echo "当前 control-proxy 服务块内容："
-  sed -n '/^  control-proxy:/,/^  [^ ]/p' ./docker-compose.yml
-  exit 1
-fi
-
-# ---- 动态注入 Debian 镜像源（使用清华源，忽略过期） ----
-DEBIAN_MIRROR="http://mirrors.tuna.tsinghua.edu.cn"
-echo "→ 使用 Debian 镜像源: $DEBIAN_MIRROR"
-
-echo "→ 注入 DEBIAN_MIRROR 到 control-proxy 构建参数..."
-sed -i '/^  control-proxy:/,/^  [^ ]/ {
-    s|^    build: .\/control-proxy.*|    build:\n      context: .\/control-proxy\n      args:\n        DEBIAN_MIRROR: '"$DEBIAN_MIRROR"'|
-}' ./docker-compose.yml
-
-# ---- 验证注入 ----
-if grep -A 5 '^  control-proxy:' ./docker-compose.yml | grep -q "DEBIAN_MIRROR: $DEBIAN_MIRROR"; then
-  echo "✅ 已成功注入 DEBIAN_MIRROR=$DEBIAN_MIRROR"
-else
-  echo "❌ 错误：注入 DEBIAN_MIRROR 失败！"
-  echo "当前 control-proxy 构建块内容："
-  sed -n '/^  control-proxy:/,/^  [^ ]/p' ./docker-compose.yml
-  exit 1
-fi
-
-# ---- 生成支持 ARG 的 Dockerfile（已包含忽略过期选项） ----
-echo "→ 生成 control-proxy 的 Dockerfile（支持 ARG 并忽略过期）"
-cat > control-proxy/Dockerfile << 'EOF'
-ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn
-
-FROM node:18-bullseye AS builder
-ARG DEBIAN_MIRROR
-WORKDIR /app
-RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends \
-    python3 build-essential libsqlite3-dev && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json* ./
-RUN npm install --production
-COPY . .
-
-FROM node:18-slim
-ARG DEBIAN_MIRROR
-WORKDIR /app
-RUN echo "deb ${DEBIAN_MIRROR}/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb ${DEBIAN_MIRROR}/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-RUN apt-get update -o Acquire::Check-Valid-Until=false && apt-get install -y --no-install-recommends \
-    libsqlite3-0 curl && rm -rf /var/lib/apt/lists/*
-ENV NODE_ENV=production
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app ./
-EXPOSE 8443
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -f http://localhost:8443/ || exit 1
-CMD ["node", "index.js"]
-EOF
-echo "✅ Dockerfile 已生成"
-
-echo "✅ docker-compose.yml 修改完成"
-
-# ---------- 先拉取 planet 镜像（若失败则忽略，后续会尝试本地构建） ----------
-echo "→ 尝试拉取 xubiaolin/zerotier-planet:latest 镜像..."
-if docker pull xubiaolin/zerotier-planet:latest; then
-  echo "✅ planet 镜像拉取成功"
-else
-  echo "⚠️ planet 镜像拉取失败，将使用本地构建（但已改为本地构建，请确保 Dockerfile 存在）"
-  # 若拉取失败，可保留之前替换逻辑，但此处已经替换为 image，所以不会进入本地构建
+  echo "✅ .env 已存在，跳过生成"
 fi
 
 # ---------- 构建并启动 ----------
@@ -353,7 +249,7 @@ for i in $(seq 1 20); do
       echo "✅ init-token 执行成功，authtoken 应已复制到卷中"
       break
     elif [ "$status" != "-1" ] && [ "$status" != "0" ]; then
-      echo "⚠️ init-token 退出码: $status（可能未找到 token）。查看 init-token 日志以获取详情。"
+      echo "⚠️ init-token 退出码: $status（可能未找到 token）"
       docker logs init-token || true
       break
     fi
@@ -361,23 +257,43 @@ for i in $(seq 1 20); do
   sleep 3
 done
 
+# ---------- 验证 ZeroTier 端口 ----------
+echo "→ 验证 ZeroTier 控制器端口 9994..."
+sleep 5
+if docker exec zerotier-planet netstat -tlnp 2>/dev/null | grep -q ':9994'; then
+  echo "✅ ZeroTier 控制器已在 9994 监听"
+else
+  echo "⚠️ ZeroTier 未监听 9994，尝试手动修复..."
+  docker exec zerotier-planet sh -c "mkdir -p /app/config && echo 9994 > /app/config/zerotier-one.port && pkill -9 zerotier-one; sleep 2; cd /var/lib/zerotier-one && ./zerotier-one -p9994 -d" 2>/dev/null || true
+  sleep 5
+  if docker exec zerotier-planet netstat -tlnp 2>/dev/null | grep -q ':9994'; then
+    echo "✅ 手动修复成功，ZeroTier 已在 9994 监听"
+  else
+    echo "❌ ZeroTier 启动失败，请检查容器日志：docker logs zerotier-planet"
+  fi
+fi
+
 # ---------- 输出后续指引 ----------
 cat <<EOF
 ======================================================================
-部署完成（或已启动）。下一步建议：
-1) 在 control-proxy 容器内部创建管理员：
-   docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"强密码"}'\'' http://localhost:8443/api/register'
+部署完成！下一步：
 
-2) 登录并获取 JWT：
-   docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"强密码"}'\'' http://localhost:8443/api/login'
+1) 浏览器访问：
+   http://$PUBLIC_IP:8443/register   （首次注册管理员）
+   http://$PUBLIC_IP:8443/login      （登录）
+   http://$PUBLIC_IP:8443/ztncui     （ztncui 管理界面）
+   http://$PUBLIC_IP:8443/download   （下载 planet 文件给客户端）
 
-3) 如果 init-token 未成功复制 token，请查看日志：
+2) 客户端组网：
+   - 下载 planet 文件替换本机 ZeroTier 的 planet
+   - 重启 ZeroTier 服务
+   - 加入网络（网络 ID 在 ztncui 中创建）
+
+3) 查看日志：
+   docker logs control-proxy
    docker logs zerotier-planet
-   docker logs init-token
+   docker logs ztncui-nginx
 
-常见问题排查：
-- better-sqlite3 构建失败：查看 docker compose build 输出。
-- token 未找到：检查 zerotier-planet 容器内 /var/lib/zerotier-one 路径。
 ======================================================================
 EOF
 
