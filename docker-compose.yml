@@ -14,6 +14,7 @@ services:
     volumes:
       - zerotier_one:/var/lib/zerotier-one
       - ./planet-data:/app/dist
+      - ./planet-config:/app/config
     restart: unless-stopped
 
   init-token:
@@ -28,7 +29,10 @@ services:
     restart: "no"
 
   control-proxy:
-    build: ./control-proxy
+    build:
+      context: ./control-proxy
+      args:
+        DEBIAN_MIRROR: http://mirrors.tuna.tsinghua.edu.cn
     image: control-proxy:fix-db-path
     container_name: control-proxy
     depends_on:
@@ -41,12 +45,24 @@ services:
       - DB_PATH=/data/control-proxy.db
       - CONTROLLER_URL=${CONTROLLER_URL:-http://planet:3443}
       - AUTHTOKEN=
-      - ZTNCUI_TARGET=http://planet:3443
+      - ZTNCUI_TARGET=http://nginx:8080
       - ZTNCUI_USER=admin
       - ZTNCUI_PASS=password
     volumes:
       - control-proxy-data:/data
       - zerotier_one:/secrets:ro
+      - ./planet-data:/planet-data:ro
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: ztncui-nginx
+    depends_on:
+      - planet
+    volumes:
+      - ./nginx/ztncui.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - "8080"
     restart: unless-stopped
 
 volumes:
