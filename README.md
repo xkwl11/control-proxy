@@ -1,4 +1,4 @@
-    # control-proxy
+   control-proxy
 
 Minimal control-proxy for ZeroTier Planet.
 
@@ -15,7 +15,7 @@ Minimal control-proxy for ZeroTier Planet.
 
 1) 在服务器上创建工作目录并下载脚本
 
-mkdir -p "$HOME/zero-deploy"
+    mkdir -p "$HOME/zero-deploy"
 
 # 一键执行脚本
 
@@ -24,39 +24,39 @@ mkdir -p "$HOME/zero-deploy"
 
 2) 查看脚本（务必先检查，防止下载到 HTML/404 页面）
 
-less "$HOME/zero-deploy/deploy_all.sh"
+        less "$HOME/zero-deploy/deploy_all.sh"
 # 或只看前几行：
-head -n 50 "$HOME/zero-deploy/deploy_all.sh"
+    head -n 50 "$HOME/zero-deploy/deploy_all.sh"
 
 3) 运行脚本
 
 # 快速一键（如果脚本内部会使用 sudo，则会提示你）：
-"$HOME/zero-deploy/deploy_all.sh" --yes
+    "$HOME/zero-deploy/deploy_all.sh" --yes
 
 # 或交互式（推荐首次运行）：
-"$HOME/zero-deploy/deploy_all.sh"
+    "$HOME/zero-deploy/deploy_all.sh"
 
 脚本会自动处理依赖安装、克隆并启动容器等操作。使用 $HOME/zero-deploy 的好处是：不需要提前创建 /opt 之类的系统目录，普通用户即可完成下载与执行权限设置；如果脚本需要提升权限，它会在运行时请求。
 
 查看服务状态与日志（示例）
 
-cd "$HOME/zero-deploy"
+    cd "$HOME/zero-deploy"
 
-docker compose ps
+    docker compose ps
 
-docker logs -f zerotier-planet
+    docker logs -f zerotier-planet
 
-docker logs -f init-token
+    docker logs -f init-token
 
-docker logs -f control-proxy
+    docker logs -f control-proxy
 
 验证 token 是否已复制（容器内查看）
 
-docker exec -it control-proxy sh -c 'if [ -f /secrets/authtoken.secret ]; then echo "authtoken:"; cat /secrets/authtoken.secret; else echo "no authtoken"; fi'
+    docker exec -it control-proxy sh -c 'if [ -f /secrets/authtoken.secret ]; then echo "authtoken:"; cat /secrets/authtoken.secret; else echo "no authtoken"; fi'
 
 安全创建管理员（推荐在容器内部创建）
 
-docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"你的强密码"}'\'' http://localhost:8443/api/register'
+    docker exec -it control-proxy sh -c 'curl -s -X POST -H "Content-Type: application/json" -d '\''{"username":"admin","password":"你的强密码"}'\'' http://localhost:8443/api/register'
 
 常见问题与排查（保留简短说明）
 - 如果下载的文件是 HTML（404 页面），请检查仓库是否为 private，或使用上面的 PAT/gh 方法。
