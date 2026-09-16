@@ -15,11 +15,11 @@ Minimal control-proxy for ZeroTier Planet.
 
 1) 在服务器上创建工作目录并下载脚本
 
-    mkdir -p "$HOME/zero-deploy"
+       mkdir -p "$HOME/zero-deploy"
 
 # 一键执行脚本
 
-    # curl -fsSL "https://ghproxy.net/https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh" | sudo bash -s -- --yes"
+    curl -fsSL "https://ghproxy.net/https://raw.githubusercontent.com/xkwl11/control-proxy/main/deploy_all.sh" | sudo bash -s -- --yes"
 
 
 2) 查看脚本（务必先检查，防止下载到 HTML/404 页面）
