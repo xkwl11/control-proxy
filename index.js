@@ -65,6 +65,11 @@ app.use('/', registerPageRoutes);
 // ---------- ztncui 代理 ----------
 app.use('/', downloadsRoutes);
 app.use('/ztncui', ztncuiProxyRoutes);
+// ztncui 前端 JS 用绝对路径 /controller/... 发请求，补上 /ztncui 前缀走代理（带鉴权）
+app.use('/controller', (req, res, next) => {
+  req.url = '/ztncui/controller' + req.url;
+  ztncuiProxyRoutes(req, res, next);
+});
 
 // ---------- 管理后台（仅 localhost） ----------
 app.use('/admin', function(req, res, next) {
