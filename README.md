@@ -61,6 +61,3 @@ Minimal control-proxy for ZeroTier Planet.
 常见问题与排查（保留简短说明）
 - 如果下载的文件是 HTML（404 页面），请检查仓库是否为 private，或使用上面的 PAT/gh 方法。
 - 若脚本在安装依赖时失败，请查看脚本输出日志，根据提示安装缺失的包。
-
-其它说明
-- 如果你愿意，我可以把 README 中其他部分再进一步简化或把示例脚本提取到单独的 docs/deploy.md 文件。
